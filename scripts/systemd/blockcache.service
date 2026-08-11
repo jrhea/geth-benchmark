@@ -1,0 +1,22 @@
+[Unit]
+Description=Local block cache served over JSON-RPC for reth-bench
+After=network-online.target
+
+[Service]
+Type=simple
+User=debian
+Group=debian
+# system.slice is confined to the housekeeping cores by apply-performance.sh, so
+# this inherits them and cannot steal CPU from geth on the bench cores.
+Slice=system.slice
+# python block-buffers stdout when it is not a tty, so logs never reach journald
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /home/debian/geth-benchmark/scripts/blockcache/serve.py \
+  --dir /datadrive/blockcache \
+  --addr 127.0.0.1 \
+  --port 8600
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

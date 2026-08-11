@@ -1,0 +1,25 @@
+[Unit]
+Description=blsync (beacon light client driving geth-bench)
+After=geth-bench.service
+# stop blsync automatically if geth goes away for any reason
+BindsTo=geth-bench.service
+
+[Service]
+Type=simple
+User=debian
+Group=debian
+EnvironmentFile=/etc/bench/blsync.env
+# geth being "active" does not mean authrpc is accepting connections yet
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 60); do (echo > /dev/tcp/127.0.0.1/8551) 2>/dev/null && exit 0; sleep 2; done; exit 1'
+ExecStart=/home/debian/go-ethereum/build/bin/blsync \
+  --beacon.api ${BEACON_API} \
+  --beacon.api.header=${BEACON_HEADER} \
+  --beacon.checkpoint ${BEACON_CHECKPOINT} \
+  --beacon.checkpoint.file /datadrive/geth/blsync-checkpoint.json \
+  --blsync.engine.api http://127.0.0.1:8551 \
+  --blsync.jwtsecret /datadrive/geth/geth/jwtsecret
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

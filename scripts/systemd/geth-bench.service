@@ -1,0 +1,36 @@
+[Unit]
+Description=geth (mainnet benchmark node)
+Documentation=https://geth.ethereum.org
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=debian
+Group=debian
+# CPU isolation lives in apply-performance.sh, which defines this slice. If it
+# has not run yet, systemd creates bench.slice unconfined and geth still works.
+Slice=bench.slice
+ExecStart=/home/debian/go-ethereum/build/bin/geth \
+  --datadir /datadrive/geth \
+  --syncmode snap \
+  --history.chain postprague \
+  --history.state 0 \
+  --history.logs.disable \
+  --history.transactions 1 \
+  --cache 16384 \
+  --http --http.addr 127.0.0.1 --http.api eth,debug,net,web3 \
+  --authrpc.addr 127.0.0.1 --authrpc.port 8551 \
+  --authrpc.jwtsecret /datadrive/geth/geth/jwtsecret
+Restart=on-failure
+RestartSec=10
+# NEVER let systemd kill a flushing geth. The flush cost scales with how far the
+# head was just rewound (measured: 460 blocks = 9s, 2200 = 117s, 4687 = >300s),
+# so any finite value is a guess that eventually fires and causes the exact
+# corruption it was meant to prevent. A hung shutdown is visible and can be killed
+# by hand; a half-written trie journal is silent data loss.
+TimeoutStopSec=infinity
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
