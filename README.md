@@ -299,31 +299,3 @@ sudo systemctl start blockcache            # serves /datadrive/blockcache on 127
 Then pass `--rpc-url http://127.0.0.1:8600` to the harness. Blocks are held in
 memory, so the harness's `drop_caches` cannot put disk reads on the measurement
 path. It runs in `system.slice`, so it stays on the housekeeping cores.
-
-## Paths
-
-```
-/datadrive/geth                    chain data, jwtsecret at geth/jwtsecret
-/home/debian/geth-benchmark        this repo, scripts run from scripts/
-/home/debian/benchmarks/<LABEL>/   one directory per experiment
-        results/<timestamp>/       one per run of it, self-contained
-                  baseline/        per-block CSVs
-                  feature/         per-block CSVs
-                  slowblock.log    geth per-block timings
-                  reth-bench.log   reth-bench output, tagged by pass
-                  bench-meta.json  refs, commits built, run parameters
-                  report.md        the report for that run
-        bin/                       the geth binaries it built
-/home/debian/benchmarks/archive/   console logs from building the box
-/home/debian/go-ethereum           geth source -> build/bin/geth
-/home/debian/reth-bench-compare    the A/B harness
-/home/debian/reth                  source for reth-bench
-/etc/bench/blsync.env              beacon key + endpoints (0600 root)
-/usr/local/bin                     reth-bench, reth-bench-compare, go, gofmt
-```
-
-The box holds a copy of this directory at `/home/debian/geth-benchmark`, so a
-path here and a path there are the same path. Update the box by copying the
-scripts over, or by cloning this once it is a repo. Nothing else belongs in the
-home directory: runs go under `benchmarks/`, and each one keeps its results, logs
-and report together.
