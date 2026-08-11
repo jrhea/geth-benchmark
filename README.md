@@ -3,172 +3,107 @@
 Real-block `newPayload` benchmarks for go-ethereum, on the `geth-benchmark-1` box.
 
 Replays real mainnet blocks into two builds of geth over the engine API and
-reports the difference between them. A run takes about 40 minutes.
+reports the difference. One run takes about 40 minutes.
 
-- [RESULTS.md](RESULTS.md) what the report contains and how to read it
-- [HOW-IT-WORKS.md](HOW-IT-WORKS.md) the three programs and three endpoints
-- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) when a run fails
-- [SETUP.md](SETUP.md) the machine, and how it was built
-
-## Connect
-
-```bash
-tsh ssh debian@geth-benchmark-1
-```
-
-## Benchmark
-
-**1. Push both refs to `jrhea/go-ethereum`**, which is `origin` on the box. That
-includes `master`: the box benchmarks `origin/master`, not upstream, so push
-master first if you want a current one.
-
-**2. Launch it.** `bench.sh` stops the maintenance node, checks the pinned head,
-runs the harness and writes the report.
-
-```bash
-tsh ssh debian@geth-benchmark-1 'sudo systemd-run --unit=bench --slice=bench.slice --uid=debian --gid=debian --collect --property=TimeoutStopSec=infinity --setenv=BASE=master --setenv=FEATURE=my-branch --setenv=LABEL=my-label bash /home/debian/geth-benchmark/scripts/bench.sh'
-```
-
-| env | |
+| | |
 |---|---|
-| `BASE`, `FEATURE` | the two refs. Branch, tag or commit. |
-| `LABEL` | groups this experiment under `/home/debian/benchmarks/<LABEL>/`. Re-using one keeps the earlier runs: each lands in its own `results/<timestamp>/` with its own logs. |
-| `BASE_LABEL`, `FEATURE_LABEL` | what the report heading calls each side. Default to the ref itself. |
-| `BLOCKS`, `RUNS`, `WARMUP` | 2000, 3, and `BLOCKS`. |
-| `GETH_ARGS` | extra flags for the geth under test, applied to **both** sides. |
+| [RESULTS.md](RESULTS.md) | what the report contains and how to read it |
+| [HOW-IT-WORKS.md](HOW-IT-WORKS.md) | the three programs and three endpoints |
+| [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | when a run fails |
+| [SETUP.md](SETUP.md) | the machine, and how it was built |
 
-Benchmarking against the **fork point** rather than master's tip isolates your
-change from whatever landed in master since you branched, which is usually what
-you want. It needs no push of its own, since it is already an ancestor of master:
+## Run one
 
-```bash
-git merge-base master my-branch
-```
+Push both refs to `jrhea/go-ethereum` first. That includes `master`: the box
+builds `origin/master`, not upstream.
 
-A bare hash reads badly as a heading, so give it a name. Same for a feature ref
-you want shown as something other than the branch name:
+Everything below runs from your laptop and goes over `tsh`.
 
 ```bash
---setenv=BASE=a1b2c3d4 --setenv='BASE_LABEL=fork point' \
---setenv=FEATURE=my-branch --setenv='FEATURE_LABEL=pr/35388' \
---setenv=LABEL=alopt
+bash scripts/run.sh --base master --feature my-branch --label my-label
 ```
-
-`BASE_LABEL` is the left side of the heading, `FEATURE_LABEL` the right. `LABEL`
-appears nowhere in the report, it only picks the directory:
-
-```
-### Bench: `fork point` → `pr/35388`         <- BASE_LABEL, FEATURE_LABEL
-
-- **base** `fork point` @ [`a1b2c3d4e5`](...)
-- **target** `pr/35388` @ [`dc435da7f8`](...)
-```
-
-```
-/home/debian/benchmarks/alopt/...            <- LABEL
-```
-
-Renaming a side changes only what it is called. The commit built is recorded and
-linked either way.
-
-`GETH_ARGS` reaches the geth being benchmarked, so you can measure a change under
-a different configuration. It applies to both sides, which keeps the comparison
-about the code:
 
 ```bash
---setenv=GETH_ARGS=--cache.noprefetch
+bash scripts/progress.sh my-label
 ```
-
-Several flags need quoting so they arrive as one value:
-
-```bash
---setenv='GETH_ARGS=--cache.noprefetch --cache 8192'
-```
-
-The report records them in its header, since a run with them is not comparable to
-one without:
-
-```
-both sides with `--cache.noprefetch`
-```
-
-To measure the flag itself rather than a code change, run `master` against
-`master` with it set, then again without, and compare the two per-run tables.
-
-**3. Wait 35-45 minutes**, checking with `progress.sh` below. One run at a time:
-there is one datadir and one port pair, and two at once corrupt each other while
-both look fine.
-
-**4. Read the report**, see [Viewing results](#viewing-results).
-
-It must run inside `bench.slice` or it lands in `user.slice` on the housekeeping
-cores. `bench.sh` force-moves each local branch onto `origin/<ref>` before
-building, so a re-run of the same branch name picks up new commits.
-
-To test a *setting* rather than a code change, run `master` against `master` with
-the setting applied and read the per-run table: every pass is listed, so a cold
-first pass or a shifted steady state is visible directly. Compare two settings by
-running each and checking whether the two per-run ranges overlap.
-
-## Checking on a running benchmark
-
-One line: whether it is alive, which pass and side, and how far through.
-
-```bash
-tsh ssh debian@geth-benchmark-1 'bash /home/debian/geth-benchmark/scripts/progress.sh my-label'
-```
-
-```
-active  pass 4/7 (run 2 feature)  6412/14000 blocks  45%
-```
-
-Takes `LABEL [blocks] [runs]`, defaulting to 2000 and 3. Pass 1 is the warmup,
-then two per run. The count comes from the slow-block log, which geth writes on
-every pass.
-
-Live per-block output, tagged with the pass it belongs to:
-
-```bash
-tsh ssh debian@geth-benchmark-1 'tail -f /home/debian/benchmarks/my-label/reth-bench.log'
-```
-
-```
-[run2/feature] ... Payload 25678412 processed at 0.41 Ggas/s ... newPayload latency: 74.1ms
-```
-
-**Expected pace**, so you can tell slow from stuck. A 2000-block pass replays in
-~200s. Add ~30s node start, ~45s rewind and up to ~2min flush, so **~5-6 min per
-pass**, and **35-45 minutes** for 7 passes.
-
-If it looks stuck, find out whether geth is working or waiting before doing
-anything:
-
-```bash
-tsh ssh debian@geth-benchmark-1 'uptime; pgrep -af "[g]eth_" | head -2
-sudo journalctl -u geth-bench -n 3 -o cat'
-```
-
-Load near zero with no recent geth log lines means waiting, not working. Check
-for a wedged stop, see TROUBLESHOOTING.md, rather than assuming a long flush.
-
-## Viewing results
-
-Reports are markdown, meant to be pasted into a PR or a chat as they are. Each
-one lives with the run that produced it, at
-`/home/debian/benchmarks/<LABEL>/results/<timestamp>/report.md`.
-
-**Print the latest run of a benchmark.** Runs from your laptop over tsh:
 
 ```bash
 bash scripts/latest-report.sh my-label
 ```
 
-**See what is on the box.** No argument lists every benchmark, its most recent
-run, and whether that run has a report:
+That is the whole workflow. `run.sh` returns immediately, `progress.sh` prints one
+line, and the report is markdown ready to paste into a PR.
+
+```
+active  pass 4/7 (run 2 feature)  6412/14000 blocks  45%
+```
+
+One run at a time. A second launch is refused, because there is one datadir and
+one port pair.
+
+## Options
+
+| | |
+|---|---|
+| `--base`, `--feature` | the two refs. Branch, tag or commit. Required. |
+| `--label` | groups the run under `benchmarks/<label>/`. Required. Re-using one keeps the earlier runs. |
+| `--base-label`, `--feature-label` | what the report heading calls each side. Default to the ref. |
+| `--geth-args` | extra flags for the geth under test, applied to both sides. |
+| `--blocks`, `--runs`, `--warmup` | 2000, 3, and the same as `--blocks`. |
+| `--dry-run` | print the command instead of running it. |
+
+`bash scripts/run.sh --help` lists the same.
+
+**Compare against the fork point, not master's tip**, to isolate your change from
+whatever landed since you branched. It needs no push, being already an ancestor of
+master, and a bare hash reads badly as a heading, so name it:
+
+```bash
+bash scripts/run.sh --label alopt \
+  --base "$(git merge-base master my-branch)" --base-label "fork point" \
+  --feature my-branch --feature-label "pr/35388"
+```
+
+**`--geth-args` measures your change under a different configuration.** It applies
+to both sides, so the comparison stays about the code, and the report records it
+in the header because a run with it is not comparable to one without:
+
+```bash
+bash scripts/run.sh --base master --feature my-branch --label noprefetch \
+  --geth-args "--cache.noprefetch"
+```
+
+To measure a *flag* rather than a code change, run `master` against `master` with
+it and again without, then compare the two per-run tables.
+
+## Watching a run
+
+`progress.sh` covers most of it. Pass 1 is the warmup, then two per run, so
+`--runs 3` is seven passes.
+
+For live per-block output, tagged with the pass it belongs to:
+
+```bash
+tsh ssh debian@geth-benchmark-1 'tail -f /home/debian/benchmarks/my-label/reth-bench.log'
+```
+
+**Expected pace**, so you can tell slow from stuck: a 2000-block pass replays in
+~200s, plus node start, rewind and flush, so **5-6 minutes per pass** and **40
+minutes** for seven. A run that ends in under 20 minutes failed, see
+[TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+
+## Reading results
+
+Reports live with the run that produced them, at
+`benchmarks/<label>/results/<timestamp>/report.md`. What the numbers mean is
+[RESULTS.md](RESULTS.md).
 
 ```bash
 bash scripts/latest-report.sh
 ```
+
+With no label it lists every benchmark, its most recent run, and whether that run
+has a report:
 
 ```
   LABEL                          LATEST RUN         REPORT
@@ -177,39 +112,34 @@ bash scripts/latest-report.sh
   bench                          20260804_195120    not written
 ```
 
-**Read it rendered** rather than as raw markdown in a terminal. Save it and open
-it in whatever renders markdown for you:
+To read it rendered rather than raw in a terminal:
 
 ```bash
 bash scripts/latest-report.sh my-label > /tmp/report.md && open /tmp/report.md
 ```
 
-**An older run**, when a label has several. Copy the timestamp from the listing:
+An older run, once a label has several:
 
 ```bash
 tsh ssh debian@geth-benchmark-1 'cat /home/debian/benchmarks/my-label/results/20260807_174135/report.md'
 ```
 
-**Regenerate one**, after changing `report.py` or to relabel the sides. Pass the
+To regenerate one, after changing `report.py` or to relabel the sides. Pass the
 run directory and it picks the newest results inside:
 
 ```bash
 tsh ssh debian@geth-benchmark-1 'python3 /home/debian/geth-benchmark/scripts/report.py --results /home/debian/benchmarks/my-label'
 ```
 
-That prints to stdout. To overwrite the saved copy in place:
+It needs nothing else because `bench.sh` leaves a `bench-meta.json` holding the
+refs and the commits it built. `--base-label` and `--target-label` override the
+heading.
 
-```bash
-tsh ssh debian@geth-benchmark-1 'D=$(ls -1dt /home/debian/benchmarks/my-label/results/*/ | head -1); python3 /home/debian/geth-benchmark/scripts/report.py --results $D > $D/report.md'
-```
+## The block window
 
-It needs no other arguments because `bench.sh` leaves a `bench-meta.json` holding
-the refs, the commits it built and the slow-block log path. `--base-label` and
-`--target-label` override what the heading calls each side.
-
-## Current window
-
-Re-pinned 2026-08-04.
+Every run replays the same blocks, because the node's head is pinned and the
+harness replays what comes after it. If the head drifts, each run silently
+benchmarks a different range.
 
 | | |
 |---|---|
@@ -217,49 +147,35 @@ Re-pinned 2026-08-04.
 | window | 25,677,501 .. 25,679,500 (2000 blocks) |
 | snap-sync pivot floor | 25,676,837 (663 blocks of margin) |
 | cache range | 25,676,776 .. 25,681,527 |
-| cache dir | `/datadrive/blockcache` |
-| backup | `/datadrive/geth-backup` (647 GB, same pinned state) |
-| harness flag | `--rpc-url http://127.0.0.1:8600` |
+| block cache | `/datadrive/blockcache`, served on `127.0.0.1:8600` |
+| datadir backup | `/datadrive/geth-backup`, same pinned state |
 
-"Pinned" means the node's head is deliberately left at a chosen block and not
-following the chain: stop blsync, `debug_setHead(N)`, stop geth. It matters
-because the harness reads the current head and replays the blocks *after* it, so
-a fixed head means every run executes the identical blocks and results from
-different days are comparable. If the head drifts, each run silently benchmarks a
-different range.
+Moving it:
 
-Restore from the backup with geth stopped:
+```bash
+tsh ssh debian@geth-benchmark-1 'bash /home/debian/geth-benchmark/scripts/new-window.sh --blocks 2000'
+```
+
+It syncs to tip, rewinds to pin the head, refetches the cache, then prints the
+rows to paste into the table above.
+
+**Only shallow rewinds on this datadir.** `setHead` deletes bodies and receipts
+above the new head, so a deep rewind destroys months of chain data and getting
+back to tip means a fresh snap sync. For an older window, copy the datadir and
+run against the copy, with `--datadir` and a larger `--max-rewind`. A copy is
+~690 GB, about 10 minutes, and 8 fit in free space.
+
+Restoring the backup, with geth stopped:
 
 ```bash
 sudo rm -rf /datadrive/geth && sudo cp -a /datadrive/geth-backup /datadrive/geth
 ```
 
-The backup is itself pinned, so a restore is runnable with no rewind.
+## The maintenance node
 
-## Moving the window
-
-```bash
-bash scripts/new-window.sh --blocks 2000 --source-rpc https://<endpoint>
-```
-
-Syncs to tip, rewinds to pin the head, stops geth, refetches the cache, and
-prints the numbers to record below.
-
-**Only shallow rewinds on this datadir.** `setHead` truncates the freezer and
-deletes bodies and receipts above the new head, so a deep rewind destroys months
-of chain data and getting back to tip means a fresh snap sync that resets the
-pivot floor and discards state history. For an older window, copy the datadir
-first and run against the copy:
-
-```bash
-sudo systemctl stop blsync-bench geth-bench
-sudo cp -a /datadrive/geth /datadrive/geth-YYYY-MM-DD
-bash scripts/new-window.sh --datadir /datadrive/geth-YYYY-MM-DD --max-rewind 2000000 ...
-```
-
-A copy is ~690 GB, about 10 minutes on this NVMe, and 8 fit in free space.
-
-## Start / stop
+geth and blsync are stopped between benchmarks and disabled at boot, so nothing
+moves the pinned head. `bench.sh` stops them itself, so you only need these to
+let the node follow the chain again:
 
 ```bash
 sudo systemctl start geth-bench blsync-bench
@@ -269,33 +185,14 @@ sudo systemctl start geth-bench blsync-bench
 sudo systemctl stop blsync-bench geth-bench
 ```
 
-Stop blsync first. Confirm geth flushed cleanly:
+Stop blsync first, and confirm geth flushed cleanly:
 
 ```bash
 sudo journalctl -u geth-bench -n 20 -o cat | grep -E "Persisted|Blockchain stopped"
 ```
 
-## Status
+Health check, from your laptop:
 
 ```bash
-bash /home/debian/geth-benchmark/scripts/status.sh
+bash scripts/status.sh
 ```
-
-```bash
-sudo journalctl -u geth-bench -f -o cat
-```
-
-## Block cache
-
-reth-bench fetches every replay block over RPC, on the warmup and on both refs,
-every run. The harness's rewind deletes those blocks from the node afterwards, so
-they genuinely have to come from outside it. Instead of hitting a remote endpoint
-three times per run, fetch the window once and serve it from disk.
-
-```bash
-sudo systemctl start blockcache            # serves /datadrive/blockcache on 127.0.0.1:8600
-```
-
-Then pass `--rpc-url http://127.0.0.1:8600` to the harness. Blocks are held in
-memory, so the harness's `drop_caches` cannot put disk reads on the measurement
-path. It runs in `system.slice`, so it stays on the housekeeping cores.

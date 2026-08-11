@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 #
-# How far a benchmark has got. Run ON the box as debian.
+# How far a benchmark has got. Run this from your laptop, it goes over tsh.
 #
-#   bash progress.sh LABEL [blocks] [runs]
+#   bash progress.sh my-label [blocks] [runs]
 #
-# Counts blocks in the slow-block log, which geth writes on every pass including
-# the warmup. reth-bench.log only holds the warmup.
+# blocks and runs default to 2000 and 3, matching bench.sh, and only need passing
+# if the run used something else.
 set -uo pipefail
+HOST="${BENCH_HOST:-debian@geth-benchmark-1}"
 LABEL=${1:?usage: progress.sh LABEL [blocks] [runs]}
-BLOCKS=${2:-2000}
-RUNS=${3:-3}
+
+tsh ssh "$HOST" "bash -s $LABEL ${2:-2000} ${3:-3}" <<'REMOTE'
+set -uo pipefail
+LABEL=$1
+BLOCKS=$2
+RUNS=$3
 
 RUN=/home/debian/benchmarks/$LABEL
 PASSES=$(( 2 * RUNS + 1 ))
@@ -68,3 +73,4 @@ else
 fi
 
 echo "$STATE  pass $P/$PASSES ($WHERE)  $DONE/$TOTAL blocks  $(( DONE * 100 / TOTAL ))%$NOTE"
+REMOTE

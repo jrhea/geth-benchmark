@@ -10,12 +10,12 @@
 #
 # Options:
 #   --blocks N        window size, default 2000
-#   --margin N        gap between the parked head and tip, default 200
+#   --margin N        gap between the pinned head and tip, default 200
 #   --datadir PATH    default /datadrive/geth (only used in the summary)
 #   --cache PATH      default /datadrive/blockcache
 #   --max-rewind N    refuse to rewind further than this, default 50000
 #   --source-rpc URL  fetch blocks from here instead of the local node
-#   --park N          park at this exact block instead of tip-blocks-margin, and
+#   --pin N           pin at this exact block instead of tip-blocks-margin, and
 #                     cache everything from there to tip. Use this to sit just
 #                     above the snap-sync pivot so the window can grow.
 #
@@ -35,7 +35,7 @@ DATADIR=/datadrive/geth
 CACHE=/datadrive/blockcache
 MAX_REWIND=50000
 SOURCE_RPC=""
-PARK_AT=""
+PIN_AT=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -45,7 +45,7 @@ while [ $# -gt 0 ]; do
     --cache) CACHE="$2"; shift 2 ;;
     --max-rewind) MAX_REWIND="$2"; shift 2 ;;
     --source-rpc) SOURCE_RPC="$2"; shift 2 ;;
-    --park) PARK_AT="$2"; shift 2 ;;
+    --pin) PIN_AT="$2"; shift 2 ;;
     *) echo "unknown option $1"; exit 1 ;;
   esac
 done
@@ -90,17 +90,17 @@ while true; do
 done
 
 TIP=$LH
-if [ -n "$PARK_AT" ]; then
-  # Explicit park block. Cache everything from there up to tip, since --blocks is
+if [ -n "$PIN_AT" ]; then
+  # Explicit pin block. Cache everything from there up to tip, since --blocks is
   # chosen per run by the harness and the window grows as the chain advances.
-  PARK=$PARK_AT
-  BLOCKS=$(( TIP - PARK ))
-  log "explicit park at $PARK, caching the $BLOCKS blocks up to tip"
+  PIN=$PIN_AT
+  BLOCKS=$(( TIP - PIN ))
+  log "explicit pin at $PIN, caching the $BLOCKS blocks up to tip"
 else
-  PARK=$(( TIP - BLOCKS - MARGIN ))
+  PIN=$(( TIP - BLOCKS - MARGIN ))
 fi
-REWIND=$(( TIP - PARK ))
-log "tip $TIP, want to park at $PARK (rewind $REWIND)"
+REWIND=$(( TIP - PIN ))
+log "tip $TIP, want to pin at $PIN (rewind $REWIND)"
 
 if [ "$REWIND" -gt "$MAX_REWIND" ]; then
   log "REFUSING: rewind of $REWIND exceeds --max-rewind $MAX_REWIND"
@@ -117,26 +117,26 @@ PIVOT=$(sudo journalctl -u geth-bench -o cat 2>/dev/null \
 if [ -n "${PIVOT:-}" ]; then
   FLOOR=$(( PIVOT + 64 ))
   log "snap-sync pivot $PIVOT, floor $FLOOR"
-  if [ "$PARK" -lt "$FLOOR" ]; then
+  if [ "$PIN" -lt "$FLOOR" ]; then
     NEED=$(( FLOOR + BLOCKS + MARGIN ))
     WAIT=$(( (NEED - TIP) / 300 ))
-    log "REFUSING: park $PARK is below the pivot floor $FLOOR."
+    log "REFUSING: pin $PIN is below the pivot floor $FLOOR."
     log "  A ${BLOCKS}-block window needs tip >= $NEED, tip is $TIP."
     log "  That is $(( NEED - TIP )) blocks away, roughly ${WAIT}h at 300 blocks/hour."
-    log "  Options: wait, use a smaller --blocks, or park at the floor now and let"
-    log "  the window grow (the harness only needs park+blocks <= tip at run time)."
+    log "  Options: wait, use a smaller --blocks, or pin at the floor now and let"
+    log "  the window grow (the harness only needs pin+blocks <= tip at run time)."
     exit 1
   fi
 else
   log "WARNING: could not determine the snap-sync pivot from the journal."
-  log "  If this datadir was snap synced recently, verify the park block is above it."
+  log "  If this datadir was snap synced recently, verify the pinned block is above it."
 fi
 
 # ------------------------------------------------------------- cache first
 # Do this BEFORE the rewind. Every block we need is below the tip, so the local
 # node has it now and will not after setHead deletes it.
-FROM=$(( PARK - 64 ))   # reth-bench also reads N-32 and N-64 for safe/finalized
-TO=$(( PARK + BLOCKS ))
+FROM=$(( PIN - 64 ))   # reth-bench also reads N-32 and N-64 for safe/finalized
+TO=$(( PIN + BLOCKS ))
 FETCH_FROM="${SOURCE_RPC:-$LOCAL}"
 
 log "caching blocks $FROM..$TO from $FETCH_FROM"
@@ -161,12 +161,12 @@ if ! python3 "$HERE/blockcache/fetch_requests.py" \
   exit 1
 fi
 
-# ------------------------------------------------------------- park
+# ------------------------------------------------------------- pin
 # Stop blsync first. If it is running when setHead lands it sends a
 # forkchoiceUpdated pointing at the real tip, geth starts a beacon sync forward
 # and marks the trie database as in-state-sync, and the pathdb layer goes stale.
 # The shutdown journal write then fails with "layer stale" and the state at the
-# parked head is unrecoverable.
+# pinned head is unrecoverable.
 log "stopping blsync before the rewind"
 sudo systemctl stop blsync-bench.service
 for i in $(seq 1 30); do
@@ -179,15 +179,15 @@ if systemctl is-active --quiet blsync-bench.service; then
 fi
 sleep 3
 
-log "rewinding to $PARK"
+log "rewinding to $PIN"
 curl -s --max-time 60 -X POST -H 'content-type: application/json' \
-  --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"debug_setHead\",\"params\":[\"$(printf '0x%x' $PARK)\"]}" \
+  --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"debug_setHead\",\"params\":[\"$(printf '0x%x' $PIN)\"]}" \
   "$LOCAL" >/dev/null
 sleep 10
 
 NOW=$(ethnum "$LOCAL")
 log "head is now $NOW"
-[ "$NOW" = "$PARK" ] || log "WARNING: expected $PARK, check the geth log"
+[ "$NOW" = "$PIN" ] || log "WARNING: expected $PIN, check the geth log"
 
 # Flush cost scales with the rewind and can take several minutes. The unit uses
 # TimeoutStopSec=infinity so it is never killed mid-write. Do not interrupt it.
@@ -226,12 +226,12 @@ sudo systemctl start blockcache.service
 
 cat <<EOF
 
-================ record this in README.md ================
-  parked block   $PARK
-  window         $(( PARK + 1 )) .. $TO  ($BLOCKS blocks)
-  cache range    $FROM .. $TO
-  cache dir      $CACHE
-  datadir        $DATADIR
-  harness flag   --rpc-url http://127.0.0.1:8600
-==========================================================
+========= record this in README.md, "The block window" =========
+  pinned head            $PIN
+  window                 $(( PIN + 1 )) .. $TO  ($BLOCKS blocks)
+  snap-sync pivot floor  ${FLOOR:-unknown}
+  cache range            $FROM .. $TO
+  block cache            $CACHE, served on 127.0.0.1:8600
+  datadir                $DATADIR
+================================================================
 EOF

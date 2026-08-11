@@ -46,7 +46,7 @@ All three are on this box. Nothing reaches the network during a run.
 reth-bench needs a source of blocks it can replay. `--rpc-url` points at
 `scripts/blockcache/serve.py` on this box rather than at a real node.
 
-**Why the node under test cannot be the source:** it is parked at block T, and the
+**Why the node under test cannot be the source:** it is pinned at block T, and the
 blocks being replayed are T+1 onward. It does not have them. That is the whole
 point. reth-bench is pretending to be a consensus client feeding geth work it has
 never seen.
@@ -139,7 +139,7 @@ Not measured: p2p, consensus, block building, or the block fetch.
 ## Two consequences worth remembering
 
 **The datadir head decides the block range.** Step 4 reads the head and step 5
-derives the range from it. Park the datadir and every run forever uses the same
+derives the range from it. Pin the datadir and every run forever uses the same
 blocks. Let geth follow the chain and every run uses different blocks, so results
 from different days are not comparable.
 
