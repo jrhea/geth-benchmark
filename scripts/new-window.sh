@@ -39,6 +39,7 @@ PIN_AT=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
+    -h|--help) awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "$0"; exit 0 ;;
     --blocks) BLOCKS="$2"; shift 2 ;;
     --margin) MARGIN="$2"; shift 2 ;;
     --datadir) DATADIR="$2"; shift 2 ;;
@@ -223,6 +224,16 @@ fi
 
 log "starting the cache server"
 sudo systemctl start blockcache.service
+
+# The pin lives here rather than in each script, so moving the window cannot leave
+# a benchmark rewinding to the previous one.
+WINDOW=/home/debian/benchmarks/window.env
+mkdir -p "$(dirname "$WINDOW")"
+cat > "$WINDOW" <<EOF
+PIN=$PIN
+BLOCKS=$BLOCKS
+EOF
+log "wrote $WINDOW"
 
 cat <<EOF
 

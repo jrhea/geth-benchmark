@@ -29,15 +29,29 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 BASE="${BASE:?set BASE}"
 FEATURE="${FEATURE:?set FEATURE}"
 LABEL="${LABEL:?set LABEL}"
-BLOCKS="${BLOCKS:-2000}"
 RUNS="${RUNS:-3}"
-WARMUP="${WARMUP:-$BLOCKS}"
 # extra flags for the geth under test, applied to both sides
 GETH_ARGS="${GETH_ARGS:-}"
 BASE_LABEL="${BASE_LABEL:-$BASE}"
 FEATURE_LABEL="${FEATURE_LABEL:-$FEATURE}"
-PIN=25677500
 RUNS_DIR=/home/debian/benchmarks
+
+# The pinned head and window size come from whatever new-window.sh last set up.
+# Keeping a copy here would mean a window move silently rewinds every run to the
+# previous one. Anything passed in still wins, so a short smoke test is easy.
+BLOCKS_IN="${BLOCKS:-}"
+WARMUP_IN="${WARMUP:-}"
+WINDOW=$RUNS_DIR/window.env
+[ -r "$WINDOW" ] || {
+  echo "no $WINDOW. Run new-window.sh, or write it by hand:" >&2
+  echo "  printf 'PIN=25677500\\nBLOCKS=2000\\n' > $WINDOW" >&2
+  exit 1
+}
+# shellcheck disable=SC1090
+. "$WINDOW"
+PIN="${PIN:?$WINDOW sets no PIN}"
+BLOCKS="${BLOCKS_IN:-${BLOCKS:?$WINDOW sets no BLOCKS}}"
+WARMUP="${WARMUP_IN:-$BLOCKS}"
 LOCAL=http://127.0.0.1:8545
 CACHE=http://127.0.0.1:8600
 OUT=$RUNS_DIR/${LABEL}

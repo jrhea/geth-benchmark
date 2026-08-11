@@ -150,14 +150,75 @@ benchmarks a different range.
 | block cache | `/datadrive/blockcache`, served on `127.0.0.1:8600` |
 | datadir backup | `/datadrive/geth-backup`, same pinned state |
 
-Moving it:
+Moving it. This one runs on the box under systemd, because syncing to tip can take
+hours and a dropped `tsh` session would kill it partway through:
 
 ```bash
-tsh ssh debian@geth-benchmark-1 'bash /home/debian/geth-benchmark/scripts/new-window.sh --blocks 2000'
+tsh ssh debian@geth-benchmark-1 'sudo systemd-run --unit=newwindow --uid=debian --gid=debian --collect --property=TimeoutStopSec=infinity bash /home/debian/geth-benchmark/scripts/new-window.sh --blocks 2000'
 ```
 
-It syncs to tip, rewinds to pin the head, refetches the cache, then prints the
-rows to paste into the table above.
+```bash
+tsh ssh debian@geth-benchmark-1 'sudo journalctl -u newwindow -f -o cat'
+```
+
+What it does, in order:
+
+1. Starts geth and blsync and waits until the local head is within 4 blocks of the
+   beacon chain's execution head. This is the slow part.
+2. Picks the pin: `tip - blocks - margin`, or exactly `--pin N`.
+3. Refuses if that rewind is deeper than `--max-rewind`, or if the pin falls below
+   the snap-sync pivot floor, where there is no state to execute from.
+4. Caches the blocks *before* rewinding, from `pin - 64` through `pin + blocks`.
+   The rewind deletes them from the node, and reth-bench reads N-32 and N-64 for
+   the safe and finalized hashes, hence the 64 below.
+5. Fetches those blocks' EIP-7685 execution requests from the beacon chain and
+   checks each against the block's own `requestsHash`.
+6. Stops blsync and confirms it stopped, then rewinds with `debug_setHead`. blsync
+   running during a rewind leaves the datadir unrecoverable.
+7. Stops geth, waits out the flush however long it takes, and checks the log for a
+   clean shutdown.
+8. Starts the block cache and prints the rows to record.
+
+It looks like this:
+
+```
+[12:08:47] starting geth + blsync
+[12:08:59] waiting for the node to reach tip
+[12:09:29]   local 25676914, chain 25681455, behind 4541
+...
+[12:24:20] caching blocks 25676776..25681527 from http://127.0.0.1:8545
+[12:24:52] fetching execution requests from the beacon chain
+155 of the cached blocks have requests, range 25676802..25681526
+verified all 155 block(s), 158 request item(s)
+[12:25:47] stopping blsync before the rewind
+[12:25:50] rewinding to 25676840
+[12:26:30] head is now 25676840
+[12:26:30] stopping geth
+[12:31:32] starting the cache server
+```
+
+Step 8 also writes `benchmarks/window.env`, which is where the pinned head and
+window size actually live:
+
+```
+PIN=25677500
+BLOCKS=2000
+```
+
+`bench.sh` reads it and refuses to start without it, so a window move cannot leave
+a benchmark rewinding to the previous pin. Passing `--blocks` still wins, which is
+how a 20-block smoke test works. The table above is for humans; this file is what
+the scripts use, so update the table to match after moving the window.
+
+Useful options, with the rest under `--help`:
+
+| | |
+|---|---|
+| `--blocks N` | window size, default 2000 |
+| `--margin N` | gap between the pinned head and tip, default 200 |
+| `--pin N` | pin at exactly this block and cache from there to tip, instead of `tip - blocks - margin`. Use it to sit just above the pivot floor so the window can grow as the chain advances. |
+| `--max-rewind N` | refuse to rewind further than this, default 50000 |
+| `--datadir PATH` | work on a copy instead of `/datadrive/geth` |
 
 **Only shallow rewinds on this datadir.** `setHead` deletes bodies and receipts
 above the new head, so a deep rewind destroys months of chain data and getting
