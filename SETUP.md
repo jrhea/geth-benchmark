@@ -6,6 +6,13 @@ Operating instructions: [README.md](README.md)
 Starting point: bare Ubuntu 26.04 from Ansible. git, curl, python3. No Go, Rust,
 compiler, or chain data.
 
+## 0. The machine
+
+AMD EPYC 9454P, 48 cores / 96 threads (siblings pair N and N+48), 1 NUMA node,
+125 GB RAM, 2x 3.5 TB NVMe as RAID0 = 7 TB on `/`, Ubuntu 26.04.
+
+RAID0, no redundancy. Losing a disk loses the datadir.
+
 ## 1. Toolchain, repos, builds
 
 All of this is in `scripts/setup-debian.sh`. Run on a fresh box.
@@ -224,6 +231,36 @@ Both are patched in jrhea forks; the box builds from them.
 If the box is ever rebuilt, both forks must be cloned and built, or benchmarks
 will fail in ways that look like infrastructure problems.
 
+## 7. Performance settings
+
+Applied. Re-run or change with `scripts/apply-performance.sh`.
+
+- governor `performance`, so every core sits at 2749 MHz instead of ramping between 1500 and 3812
+- turbo boost off, hard ceiling at base clock, so sustained runs cannot thermally droop
+- both set by `bench-cpu-tuning.service`, enabled at boot since sysfs writes do not persist
+
+Core layout (48 physical 0-47, SMT siblings are N+48):
+
+| cores | who |
+|---|---|
+| 0-19 | `bench.slice`: geth and reth-bench |
+| 48-67 | siblings of the bench cores, kept empty |
+| 20-23, 68-71 | spare |
+| 24-47, 72-95 | `system.slice` and `user.slice` |
+
+`bench.slice` is a top level slice, a sibling of `system.slice`. That is
+deliberate: in cgroup v2 a child's cpuset is intersected with its parent's, so
+putting it under a restricted `system.slice` would have blocked the bench cores.
+
+Verify:
+
+```bash
+grep Cpus_allowed_list /proc/self/status                      # 24-47,72-95 in a shell
+taskset -pc $(systemctl show geth-bench -p MainPID --value)   # 0-19 for geth
+```
+
+Still run paired A/B in alternating order. It matters more than any of the above.
+
 ## Not done
 
 - Why `systemctl stop` silently no-ops from inside a systemd unit. Routed around,
@@ -238,3 +275,5 @@ will fail in ways that look like infrastructure problems.
   so post results as a new message. Ref inputs are the security boundary, they
   get built and executed on a box holding the datadir, a Teleport identity, and
   an OpenBao agent.
+
+
