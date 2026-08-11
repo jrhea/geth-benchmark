@@ -15,21 +15,39 @@ RAID0, no redundancy. Losing a disk loses the datadir.
 
 ## 1. Toolchain, repos, builds
 
-All of this is in `scripts/setup-debian.sh`. Run on a fresh box.
+Clone this repo, then run its setup script. On a fresh box:
 
 ```bash
-bash scripts/setup-debian.sh
+git clone https://github.com/jrhea/geth-benchmark.git ~/geth-benchmark
+bash ~/geth-benchmark/scripts/setup-debian.sh
 ```
 
-Installs: `build-essential pkg-config libssl-dev libclang-dev clang cmake jq
-unzip`. Go 1.26.5 from the official tarball to `/usr/local/go`. Rust via rustup.
-Clones go-ethereum (jrhea + upstream remotes), reth-bench-compare, and reth.
-Builds `geth`, `reth-bench`, `reth-bench-compare` into `/usr/local/bin`.
+It goes to `/home/debian/geth-benchmark` so a path in these documents is the same
+path on the box. `scripts/blockcache/` in particular has to stay where
+`blockcache.service` expects it. Everything a run produces goes under
+`/home/debian/benchmarks/<LABEL>/`, and nothing else belongs in the home directory.
 
-This repo goes to `/home/debian/geth-benchmark`, so a path in these documents is
-the same path on the box. Everything a run produces goes under
-`/home/debian/benchmarks/<LABEL>/`. Nothing else belongs in the home directory,
-and `scripts/blockcache/` has to stay where `blockcache.service` expects it.
+The script installs `build-essential pkg-config libssl-dev libclang-dev clang
+cmake jq unzip`, Go 1.26.5 from the official tarball to `/usr/local/go`, and Rust
+via rustup. It clones go-ethereum with the jrhea and upstream remotes, checks out
+the pinned `reth` and `reth-bench-compare` submodules, and builds `geth`,
+`reth-bench` and `reth-bench-compare` into `/usr/local/bin`.
+
+**The two Rust repos are submodules**, at `reth/` and `reth-bench-compare/`. That
+pins the tooling to a known commit instead of whatever a branch tip happens to be,
+and makes a mismatch between the box and the repo visible as a modified submodule
+pointer. Both are marked `shallow` in `.gitmodules`, so `submodule update` fetches
+one commit rather than reth's full history.
+
+Their URLs are HTTPS, so the box reads them without a credential. Pushing to them
+from a laptop wants SSH, which is a local setting rather than a repo change:
+
+```bash
+git config --global url."git@github.com:".insteadOf "https://github.com/"
+```
+
+Bumping a pinned version is two commits: one in the submodule, then the pointer in
+this repo. That second commit is the record of what the box builds from.
 
 Then, separately:
 
@@ -54,19 +72,13 @@ git clone --filter=blob:none --branch bench/npv4 git@github.com:s1na/reth.git /t
 git -C /tmp/reth-npv4 push git@github.com:jrhea/reth.git bench/npv4
 ```
 
-```bash
-gh api -X POST repos/jrhea/reth/git/refs \
-  -f ref=refs/heads/bench/npv4 \
-  -f sha=e1c99549a68b374b861945c8ee74effe549a59cc
-```
+Creating the ref with `gh api` instead does not work, it 404s: forks share an
+object store so the commit is readable, but creating a ref needs the object in your
+own repo. `--filter=blob:none` keeps the full history, so the push is not rejected
+the way a shallow clone would be, while skipping file contents.
 
-The `gh api` version does **not** work, it 404s. Forks share an object store so
-the commit is readable, but creating a ref needs the object in your own repo.
-Use the clone-and-push. `--filter=blob:none` keeps full history (so the push
-isn't rejected like a shallow clone) while skipping file contents.
-
-A fork only copies the default branch, so forking `paradigmxyz/reth` does not
-give you `bench/npv4`.
+A fork only copies the default branch, so forking `paradigmxyz/reth` does not give
+you `bench/npv4`.
 
 Cargo.toml now points those five crates at `jrhea/reth`, same commit, so binaries
 are identical.

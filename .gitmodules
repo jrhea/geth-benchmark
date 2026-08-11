@@ -1,0 +1,9 @@
+[submodule "reth-bench-compare"]
+	path = reth-bench-compare
+	url = https://github.com/jrhea/reth-bench-compare.git
+	shallow = true
+[submodule "reth"]
+	path = reth
+	url = https://github.com/jrhea/reth.git
+	branch = bench/npv4
+	shallow = true
