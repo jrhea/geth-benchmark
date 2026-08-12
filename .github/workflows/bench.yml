@@ -136,7 +136,7 @@ jobs:
 
       - name: upload the per-block data
         if: always() && env.RESULTS != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bench-${{ steps.resolve.outputs.label }}-${{ github.run_id }}
           path: |
