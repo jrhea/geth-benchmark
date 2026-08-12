@@ -70,7 +70,7 @@ from the command line is refused, and a second dispatch queues behind the first.
 whatever landed in master since you branched:
 
 ```bash
-bash scripts/run.sh --base fork-point --feature my-branch --label my-label
+bash scripts/run.sh --base fork-point --feature my-branch
 ```
 
 It resolves `git merge-base origin/master <feature>` on the box, whose clone is the
@@ -95,8 +95,7 @@ to both sides, so the comparison stays about the code, and the report records it
 in the header because a run with it is not comparable to one without:
 
 ```bash
-bash scripts/run.sh --base master --feature my-branch --label noprefetch \
-  --geth-args "--cache.noprefetch"
+bash scripts/run.sh --base master --feature my-branch --geth-args "--cache.noprefetch"
 ```
 
 To measure a *flag* rather than a code change, run `master` against `master` with
@@ -110,7 +109,7 @@ Pass 1 is the warmup, then two per run, so `--runs 3` is seven passes.
 For live per-block output, tagged with the pass it belongs to:
 
 ```bash
-tsh ssh debian@geth-benchmark-1 'tail -f /home/debian/benchmarks/my-label/reth-bench.log'
+tsh ssh debian@geth-benchmark-1 'tail -f /home/debian/benchmarks/my-branch-vs-master/reth-bench.log'
 ```
 
 **Expected pace**, so you can tell slow from stuck: a 2000-block pass replays in
@@ -133,28 +132,28 @@ has a report:
 
 ```
   LABEL                          LATEST RUN         REPORT
-  alopt                          20260805_165916    yes
-  precompile-cache-gas-gate      20260807_174135    yes
-  bench                          20260804_195120    not written
+  my-branch-vs-master            20260805_165916    yes
+  trie-prefetch-vs-fork-point    20260807_174135    yes
+  derp-vs-master                 20260804_195120    not written
 ```
 
 To read it rendered rather than raw in a terminal:
 
 ```bash
-bash scripts/latest-report.sh my-label > /tmp/report.md && open /tmp/report.md
+bash scripts/latest-report.sh my-branch-vs-master > /tmp/report.md && open /tmp/report.md
 ```
 
 An older run, once a label has several:
 
 ```bash
-tsh ssh debian@geth-benchmark-1 'cat /home/debian/benchmarks/my-label/results/20260807_174135/report.md'
+tsh ssh debian@geth-benchmark-1 'cat /home/debian/benchmarks/my-branch-vs-master/results/20260807_174135/report.md'
 ```
 
 To regenerate one, after changing `report.py` or to relabel the sides. Pass the
 run directory and it picks the newest results inside:
 
 ```bash
-tsh ssh debian@geth-benchmark-1 'python3 /home/debian/geth-benchmark/scripts/report.py --results /home/debian/benchmarks/my-label'
+tsh ssh debian@geth-benchmark-1 'python3 /home/debian/geth-benchmark/scripts/report.py --results /home/debian/benchmarks/my-branch-vs-master'
 ```
 
 It needs nothing else because `bench.sh` leaves a `bench-meta.json` holding the
