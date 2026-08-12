@@ -7,19 +7,14 @@
 #
 # Prints "<fork point> <ref's commit> <commits master is ahead>".
 #
-# master comes from the same repo as the ref, so a branch in someone's fork is
-# measured against their master. Against ours it would land earlier than the real
-# fork point whenever their branch sits on commits our mirror has not got, which
-# quietly puts upstream changes the author never wrote into the comparison.
+# Always upstream's master, whoever the ref belongs to. A fork's own master is
+# usually an abandoned snapshot that the branch descends from, so the merge base
+# comes back as that snapshot rather than where the branch actually diverged.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="${GETH_REPO:-/home/debian/go-ethereum}"
 SPEC="${1:?usage: fork-point.sh [owner:]ref}"
-
-case "$SPEC" in
-  *:*) MASTER="${SPEC%%:*}:master" ;;
-  *)   MASTER=master ;;
-esac
+MASTER=ethereum:master
 
 F=$(bash "$HERE/resolve-ref.sh" "$SPEC") || exit 1
 M=$(bash "$HERE/resolve-ref.sh" "$MASTER") || exit 1
