@@ -19,7 +19,8 @@
 set -uo pipefail
 HOST="${BENCH_HOST:-debian@geth-benchmark-1}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
-REMOTE=/home/debian/geth-benchmark/scripts
+REPO=/home/debian/geth-benchmark
+REMOTE=$REPO/scripts
 
 BASE= FEATURE= LABEL= BASE_LABEL= FEATURE_LABEL= GETH_ARGS=
 BLOCKS= RUNS= WARMUP= DRY=
@@ -93,6 +94,12 @@ CMD="sudo systemd-run --unit=bench --slice=bench.slice --uid=debian --gid=debian
 CMD="$CMD --collect --property=TimeoutStopSec=infinity"
 for e in "${SETENV[@]}"; do CMD="$CMD $(printf '%q' "$e")"; done
 CMD="$CMD bash $REMOTE/bench.sh"
+
+# The box runs whatever is in its clone, so bring it up to date first. A dispatch
+# from the Actions tab does the same, and either way local edits there are lost.
+UPDATE="cd $REPO && git fetch -q origin && git reset -q --hard origin/main"
+UPDATE="$UPDATE && git submodule update --init -q"
+CMD="$UPDATE && $CMD"
 
 if [ -n "$DRY" ]; then printf '%s\n' "$CMD"; exit 0; fi
 
