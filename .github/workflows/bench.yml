@@ -49,14 +49,15 @@ on:
         required: false
         default: ""
 
-# One datadir and one port pair, so runs are serialized rather than cancelled.
-# bench.sh also holds an flock, which is what protects against a manual launch
-# that this group cannot see.
-concurrency:
-  group: bench
-  cancel-in-progress: false
-
 jobs:
+  # There is one datadir and one port pair, so runs have to be serialized. The
+  # runner does that by taking one job at a time, and WAIT below keeps the job
+  # occupied for the whole run, so dispatches queue behind each other. bench.sh
+  # also holds an flock, which covers a launch from a laptop that the runner
+  # knows nothing about.
+  #
+  # Deliberately no concurrency group. A group keeps only one run waiting and
+  # cancels the earlier one when another arrives, which loses queued requests.
   bench:
     runs-on: [self-hosted, bench-box]
     timeout-minutes: 180
