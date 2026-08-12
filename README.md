@@ -55,14 +55,28 @@ one port pair.
 `bash scripts/run.sh --help` lists the same.
 
 **Compare against the fork point, not master's tip**, to isolate your change from
-whatever landed since you branched. It needs no push, being already an ancestor of
-master, and a bare hash reads badly as a heading, so name it:
+whatever landed in master since you branched:
 
 ```bash
-bash scripts/run.sh --label alopt \
-  --base "$(git merge-base master my-branch)" --base-label "fork point" \
-  --feature my-branch --feature-label "pr/35388"
+bash scripts/run.sh --base fork-point --feature my-branch --label my-label
 ```
+
+It resolves `git merge-base origin/master <feature>` on the box, whose clone is the
+one that builds, so a laptop that has not fetched the branch cannot give a stale
+answer. It prints what it picked and how far behind master that is:
+
+```
+resolving the fork point of my-branch against origin/master...
+  cae76d5a3c3c7baad83bde2bd6c2d3ae8baca7d3  (0 commits behind origin/master)
+```
+
+`0 commits behind` means the branch is rebased on current master, so the fork point
+and master's tip are the same commit. The distinction only bites for a branch that
+has fallen behind.
+
+The heading gets `fork point` rather than the bare hash, unless you pass
+`--base-label` yourself. It refuses if the fork point turns out to be the feature
+commit itself, since there would be nothing to compare.
 
 **`--geth-args` measures your change under a different configuration.** It applies
 to both sides, so the comparison stays about the code, and the report records it

@@ -4,7 +4,8 @@
 #
 #   bash run.sh --base master --feature my-branch --label my-label
 #
-#   --base REF          what to compare against. Branch, tag or commit.
+#   --base REF          what to compare against. Branch, tag, commit, or the word
+#                       fork-point for where --feature diverged from master.
 #   --feature REF       what to measure.
 #   --label NAME        groups the run under /home/debian/benchmarks/NAME/
 #   --base-label TEXT   what the report heading calls each side, when the ref
@@ -41,6 +42,32 @@ done
 for v in BASE FEATURE LABEL; do
   [ -n "${!v}" ] || { echo "--$(echo $v | tr A-Z a-z) is required, try --help" >&2; exit 1; }
 done
+
+# Resolve the fork point on the box. Its clone is the one that builds, and it has
+# both refs fetched, so a laptop that has not fetched the branch cannot produce a
+# stale answer here.
+if [ "$BASE" = fork-point ] || [ "$BASE" = forkpoint ]; then
+  echo "resolving the fork point of $FEATURE against origin/master..."
+  RESOLVED=$(tsh ssh "$HOST" "bash -s $(printf %q "$FEATURE")" <<'REMOTE'
+set -uo pipefail
+cd /home/debian/go-ethereum || exit 1
+git fetch -q origin --tags 2>/dev/null
+F=$(git rev-parse --verify -q "origin/$1" || git rev-parse --verify -q "$1") || {
+  echo "cannot resolve $1 on the box" >&2; exit 1; }
+MB=$(git merge-base origin/master "$F") || {
+  echo "no common ancestor between origin/master and $1" >&2; exit 1; }
+echo "$MB $F $(git rev-list --count "$MB..origin/master")"
+REMOTE
+  ) || exit 1
+  set -- $RESOLVED
+  BASE=$1; FEAT_SHA=$2; BEHIND=$3
+  if [ "$BASE" = "$FEAT_SHA" ]; then
+    echo "the fork point is $FEATURE itself, so there is nothing to compare" >&2
+    exit 1
+  fi
+  BASE_LABEL="${BASE_LABEL:-fork point}"
+  echo "  $BASE  ($BEHIND commits behind origin/master)"
+fi
 
 # Only set what was asked for, so bench.sh keeps its own defaults.
 SETENV=()
