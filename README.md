@@ -57,7 +57,7 @@ from the command line is refused, and a second dispatch queues behind the first.
 
 | | |
 |---|---|
-| `--base`, `--feature` | the two refs. Branch, tag or commit. Required. |
+| `--base`, `--feature` | the two refs. Branch, tag, commit, or `owner:ref` for someone else's fork. Required. |
 | `--label` | groups the run under `benchmarks/<label>/`. Defaults to `<feature>-vs-<base>`. Re-using one keeps the earlier runs. |
 | `--base-label`, `--feature-label` | what the report heading calls each side. Default to the ref. |
 | `--geth-args` | extra flags for the geth under test, applied to both sides. |
@@ -97,6 +97,18 @@ in the header because a run with it is not comparable to one without:
 ```bash
 bash scripts/run.sh --base master --feature my-branch --geth-args "--cache.noprefetch"
 ```
+
+**To benchmark a branch in someone else's fork**, name the owner with `owner:ref`.
+From the Actions tab they are the two fork dropdowns instead:
+
+```bash
+bash scripts/run.sh --base fork-point --feature rjl493456442:optimize-commit
+```
+
+Only owners listed in [forks.txt](forks.txt) resolve, and that list is the trust
+boundary rather than a convenience: whatever ref you name is fetched, built and
+executed on the box as a user with passwordless root. Adding a line to it is the
+whole authorization, so it goes through a PR.
 
 To measure a *flag* rather than a code change, run `master` against `master` with
 it and again without, then compare the two per-run tables.

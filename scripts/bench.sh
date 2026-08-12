@@ -8,7 +8,10 @@
 # covers the blocks it replays, so keep it equal to the window. LABEL groups the
 # run on disk and defaults to the two refs, see mklabel.sh.
 #
-# BASE and FEATURE take a branch, a tag or a commit. BASE_LABEL and FEATURE_LABEL
+# BASE and FEATURE take a branch, a tag or a commit, and owner:ref for one in
+# someone else's fork, who has to be listed in forks.txt.
+#
+# BASE_LABEL and FEATURE_LABEL
 # set what the report calls them, which is worth setting when the ref is a hash:
 #
 #   BASE=a1b2c3d4 BASE_LABEL="fork point" FEATURE=my-branch bash bench.sh
@@ -109,6 +112,11 @@ log "refs: base=$BASE feature=$FEATURE  blocks=$BLOCKS runs=$RUNS warmup=$WARMUP
 cd /home/debian/go-ethereum
 git fetch -q origin --tags
 git fetch -q upstream 2>/dev/null || true
+# owner:ref names someone else's fork. Resolve it to a commit here, so the rest
+# of this and the harness only ever see a ref this repo already has. The labels
+# were taken above and still read as the ref that was asked for.
+case "$BASE"    in *:*) BASE=$(bash "$HERE/resolve-ref.sh" "$BASE") || exit 1 ;; esac
+case "$FEATURE" in *:*) FEATURE=$(bash "$HERE/resolve-ref.sh" "$FEATURE") || exit 1 ;; esac
 # Move each local branch onto its remote, or a second run of the same branch name
 # builds whatever was checked out the first time. Nothing is developed on this
 # box, so a forced move is safe. Detach first because the harness leaves HEAD on

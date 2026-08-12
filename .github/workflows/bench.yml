@@ -2,7 +2,7 @@ name: bench
 
 # Titles the run in the list. It is evaluated before the job starts, so it cannot
 # use the label the run derives, only what was typed.
-run-name: ${{ inputs.label || format('{0} vs {1}', inputs.feature, inputs.base) }}
+run-name: ${{ inputs.label || format('{0}:{1} vs {2}', inputs.feature_fork, inputs.feature, inputs.base) }}
 
 # Dispatch only. No pull_request or issue_comment trigger: a benchmark builds and
 # runs whatever ref it is given, on a box where debian has passwordless root, so
@@ -11,11 +11,23 @@ run-name: ${{ inputs.label || format('{0} vs {1}', inputs.feature, inputs.base) 
 on:
   workflow_dispatch:
     inputs:
+      feature_fork:
+        description: "whose go-ethereum the feature is in"
+        type: choice
+        options: ["ethereum", "cskiraly", "fjl", "healthykim", "jrhea",
+                  "lightclient", "MariusVanDerWijden", "rjl493456442"]
+        default: jrhea
       feature:
-        description: "ref to measure (branch, tag or commit)"
+        description: "branch, tag or commit to measure"
         required: true
+      base_fork:
+        description: "whose go-ethereum the base is in. Ignored for 'fork-point'"
+        type: choice
+        options: ["ethereum", "cskiraly", "fjl", "healthykim", "jrhea",
+                  "lightclient", "MariusVanDerWijden", "rjl493456442"]
+        default: jrhea
       base:
-        description: "ref to compare against, or fork-point"
+        description: "branch, tag or commit to compare against, or 'fork-point'"
         required: true
         default: fork-point
       label:
@@ -65,12 +77,23 @@ jobs:
         id: resolve
         env:
           BASE: ${{ inputs.base }}
+          BASE_FORK: ${{ inputs.base_fork }}
           FEATURE: ${{ inputs.feature }}
+          FEATURE_FORK: ${{ inputs.feature_fork }}
           LABEL: ${{ inputs.label }}
         run: |
+          R=/home/debian/geth-benchmark/scripts
+          # Someone else's fork becomes an owner:ref spec. jrhea is this repo's
+          # own origin, and fork-point is a keyword rather than a branch, so
+          # neither takes one.
+          [ "$FEATURE_FORK" = jrhea ] || FEATURE="$FEATURE_FORK:$FEATURE"
+          if [ "$BASE" != fork-point ] && [ "$BASE_FORK" != jrhea ]; then
+            BASE="$BASE_FORK:$BASE"
+          fi
+          echo "feature=$FEATURE" >> "$GITHUB_OUTPUT"
+
           # Name it from the refs as given, before fork-point becomes a hash.
-          [ -n "$LABEL" ] || LABEL=$(bash /home/debian/geth-benchmark/scripts/mklabel.sh \
-            "$FEATURE" "$BASE")
+          [ -n "$LABEL" ] || LABEL=$(bash "$R/mklabel.sh" "$FEATURE" "$BASE")
           echo "label=$LABEL" >> "$GITHUB_OUTPUT"
           echo "label: $LABEL"
           # the exact one, which run-name cannot know
@@ -79,8 +102,7 @@ jobs:
           cd /home/debian/go-ethereum
           git fetch -q origin --tags
           if [ "$BASE" = fork-point ]; then
-            F=$(git rev-parse --verify -q "origin/$FEATURE" \
-             || git rev-parse --verify -q "$FEATURE") \
+            F=$(bash "$R/resolve-ref.sh" "$FEATURE") \
              || { echo "cannot resolve $FEATURE"; exit 1; }
             BASE=$(git merge-base origin/master "$F") \
              || { echo "no common ancestor with master"; exit 1; }
@@ -97,7 +119,7 @@ jobs:
         env:
           BASE: ${{ steps.resolve.outputs.base }}
           BASE_LABEL: ${{ steps.resolve.outputs.base_label }}
-          FEATURE: ${{ inputs.feature }}
+          FEATURE: ${{ steps.resolve.outputs.feature }}
           LABEL: ${{ steps.resolve.outputs.label }}
           BLOCKS: ${{ inputs.blocks }}
           RUNS: ${{ inputs.runs }}

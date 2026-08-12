@@ -7,6 +7,12 @@
 #   --base REF          what to compare against. Branch, tag, commit, or the word
 #                       fork-point for where --feature diverged from master.
 #   --feature REF       what to measure.
+#
+#   Either takes owner:ref to read it from someone else's go-ethereum, as long as
+#   they are listed in forks.txt:
+#
+#     bash run.sh --base fork-point --feature rjl493456442:optimize-commit
+#
 #   --label NAME        groups the run under /home/debian/benchmarks/NAME/.
 #                       Defaults to the two refs, and is printed when it starts.
 #   --base-label TEXT   what the report heading calls each side, when the ref
@@ -15,7 +21,8 @@
 #   --blocks N          default 2000
 #   --runs N            default 3
 #   --warmup N          default the same as --blocks
-#   --dry-run           print the command instead of running it
+#   --dry-run           print the launch command instead of running it. It still
+#                       updates the box's clone and resolves the refs.
 set -uo pipefail
 HOST="${BENCH_HOST:-debian@geth-benchmark-1}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -46,6 +53,12 @@ for v in BASE FEATURE; do
   [ -n "${!v}" ] || { echo "--$(echo $v | tr A-Z a-z) is required, try --help" >&2; exit 1; }
 done
 
+# The box runs whatever is in its clone, so update it before anything reads a
+# script from there, --dry-run included. A dispatch does the same, and local
+# edits on the box are lost either way.
+tsh ssh "$HOST" "cd $REPO && git fetch -q origin && git reset -q --hard origin/main &&
+                 git submodule update --init -q" || exit 1
+
 # Name it after the refs as they were given, before fork-point turns into a hash,
 # so this and the workflow agree on where the run lands.
 if [ -z "$LABEL" ]; then
@@ -62,8 +75,7 @@ if [ "$BASE" = fork-point ] || [ "$BASE" = forkpoint ]; then
 set -uo pipefail
 cd /home/debian/go-ethereum || exit 1
 git fetch -q origin --tags 2>/dev/null
-F=$(git rev-parse --verify -q "origin/$1" || git rev-parse --verify -q "$1") || {
-  echo "cannot resolve $1 on the box" >&2; exit 1; }
+F=$(bash /home/debian/geth-benchmark/scripts/resolve-ref.sh "$1") || exit 1
 MB=$(git merge-base origin/master "$F") || {
   echo "no common ancestor between origin/master and $1" >&2; exit 1; }
 echo "$MB $F $(git rev-list --count "$MB..origin/master")"
@@ -97,10 +109,6 @@ CMD="$CMD bash $REMOTE/bench.sh"
 
 # The box runs whatever is in its clone, so bring it up to date first. A dispatch
 # from the Actions tab does the same, and either way local edits there are lost.
-UPDATE="cd $REPO && git fetch -q origin && git reset -q --hard origin/main"
-UPDATE="$UPDATE && git submodule update --init -q"
-CMD="$UPDATE && $CMD"
-
 if [ -n "$DRY" ]; then printf '%s\n' "$CMD"; exit 0; fi
 
 tsh ssh "$HOST" "$CMD" || exit 1

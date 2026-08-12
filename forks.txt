@@ -1,0 +1,17 @@
+# go-ethereum forks a benchmark may reference, as owner:ref
+#
+#   bash scripts/run.sh --base master --feature rjl493456442:optimize-commit
+#
+# A ref named here gets fetched, built and executed on the box as a user with
+# passwordless root, so adding a line is granting that. One GitHub username per
+# line, matched without case. Add it to the dropdowns in
+# .github/workflows/bench.yml too, or it will not appear in the Actions form.
+
+ethereum
+cskiraly
+fjl
+healthykim
+jrhea
+lightclient
+MariusVanDerWijden
+rjl493456442
