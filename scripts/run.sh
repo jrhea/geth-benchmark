@@ -2,12 +2,13 @@
 #
 # Start a benchmark. Run this from your laptop, it goes over tsh.
 #
-#   bash run.sh --base master --feature my-branch --label my-label
+#   bash run.sh --base master --feature my-branch
 #
 #   --base REF          what to compare against. Branch, tag, commit, or the word
 #                       fork-point for where --feature diverged from master.
 #   --feature REF       what to measure.
-#   --label NAME        groups the run under /home/debian/benchmarks/NAME/
+#   --label NAME        groups the run under /home/debian/benchmarks/NAME/.
+#                       Defaults to the two refs, and is printed when it starts.
 #   --base-label TEXT   what the report heading calls each side, when the ref
 #   --feature-label TEXT  itself reads badly, such as a bare commit hash
 #   --geth-args FLAGS   extra flags for the geth under test, both sides
@@ -17,6 +18,7 @@
 #   --dry-run           print the command instead of running it
 set -uo pipefail
 HOST="${BENCH_HOST:-debian@geth-benchmark-1}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
 REMOTE=/home/debian/geth-benchmark/scripts
 
 BASE= FEATURE= LABEL= BASE_LABEL= FEATURE_LABEL= GETH_ARGS=
@@ -39,9 +41,16 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-for v in BASE FEATURE LABEL; do
+for v in BASE FEATURE; do
   [ -n "${!v}" ] || { echo "--$(echo $v | tr A-Z a-z) is required, try --help" >&2; exit 1; }
 done
+
+# Name it after the refs as they were given, before fork-point turns into a hash,
+# so this and the workflow agree on where the run lands.
+if [ -z "$LABEL" ]; then
+  LABEL=$(bash "$HERE/mklabel.sh" "$FEATURE" "$BASE") || exit 1
+  echo "label: $LABEL"
+fi
 
 # Resolve the fork point on the box. Its clone is the one that builds, and it has
 # both refs fetched, so a laptop that has not fetched the branch cannot produce a

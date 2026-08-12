@@ -2,19 +2,20 @@
 #
 # Standard A/B benchmark runner. Run ON the box as debian.
 #
-#   BASE=master FEATURE=my-branch LABEL=my-branch bash bench.sh
+#   BASE=master FEATURE=my-branch bash bench.sh
 #
 # Optional: BLOCKS (2000), RUNS (3), WARMUP (defaults to BLOCKS). A warmup only
-# covers the blocks it replays, so keep it equal to the window.
+# covers the blocks it replays, so keep it equal to the window. LABEL groups the
+# run on disk and defaults to the two refs, see mklabel.sh.
 #
 # BASE and FEATURE take a branch, a tag or a commit. BASE_LABEL and FEATURE_LABEL
 # set what the report calls them, which is worth setting when the ref is a hash:
 #
-#   BASE=a1b2c3d4 BASE_LABEL="fork point" FEATURE=my-branch LABEL=mine bash bench.sh
+#   BASE=a1b2c3d4 BASE_LABEL="fork point" FEATURE=my-branch bash bench.sh
 #
 # GETH_ARGS adds flags to the geth under test, on both sides:
 #
-#   GETH_ARGS="--cache.noprefetch" BASE=master FEATURE=mine LABEL=noprefetch bash bench.sh
+#   GETH_ARGS="--cache.noprefetch" BASE=master FEATURE=mine bash bench.sh
 #
 # Writes to /home/debian/benchmarks/<LABEL>/results/<timestamp>/, report included.
 #
@@ -28,7 +29,7 @@ GETH_PROC="/[g]eth(_[0-9a-f]+)? --datadir"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BASE="${BASE:?set BASE}"
 FEATURE="${FEATURE:?set FEATURE}"
-LABEL="${LABEL:?set LABEL}"
+LABEL="${LABEL:-$(bash "$HERE/mklabel.sh" "$FEATURE" "$BASE")}"
 RUNS="${RUNS:-3}"
 # extra flags for the geth under test, applied to both sides
 GETH_ARGS="${GETH_ARGS:-}"

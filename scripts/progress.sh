@@ -2,27 +2,32 @@
 #
 # How far a benchmark has got. Run this from your laptop, it goes over tsh.
 #
-#   bash progress.sh my-label [blocks] [runs]
+#   bash progress.sh [label] [blocks] [runs]
 #
-# blocks and runs default to 2000 and 3, matching bench.sh, and only need passing
-# if the run used something else.
+# With no label it reports whatever is running. blocks and runs default to 2000
+# and 3, matching bench.sh, and only need passing if the run used something else.
 set -uo pipefail
 HOST="${BENCH_HOST:-debian@geth-benchmark-1}"
-LABEL=${1:?usage: progress.sh LABEL [blocks] [runs]}
 
-tsh ssh "$HOST" "bash -s $LABEL ${2:-2000} ${3:-3}" <<'REMOTE'
+tsh ssh "$HOST" "bash -s $(printf %q "${1:-}") ${2:-2000} ${3:-3}" <<'REMOTE'
 set -uo pipefail
 LABEL=$1
 BLOCKS=$2
 RUNS=$3
 
-RUN=/home/debian/benchmarks/$LABEL
-PASSES=$(( 2 * RUNS + 1 ))
-TOTAL=$(( PASSES * BLOCKS ))
-
 # There is one bench unit, so check whose it is before reporting it as running.
 STATE=$(systemctl is-active bench 2>/dev/null | head -1)
 NOW=$(systemctl show bench -p Environment --value 2>/dev/null | tr ' ' '\n' | sed -n 's/^LABEL=//p')
+
+if [ -z "$LABEL" ]; then
+  [ -n "$NOW" ] || { echo "nothing running, pass a label"; exit 0; }
+  LABEL=$NOW
+  echo "$LABEL"
+fi
+
+RUN=/home/debian/benchmarks/$LABEL
+PASSES=$(( 2 * RUNS + 1 ))
+TOTAL=$(( PASSES * BLOCKS ))
 MINE=false
 [ "$STATE" = active ] && [ "$NOW" = "$LABEL" ] && MINE=true
 

@@ -15,12 +15,13 @@ on:
         required: true
         default: fork-point
       label:
-        description: "groups the run under benchmarks/<label>/"
-        required: true
+        description: "groups the run under benchmarks/<label>/. Empty names it after the refs"
+        required: false
+        default: ""
       blocks:
-        description: "payload size"
+        description: "blocks per pass."
         type: choice
-        options: ["2000", "1000", "20000"]
+        options: ["2000", "20", "500", "1000"]
         default: "2000"
       runs:
         description: "runs per side"
@@ -56,12 +57,19 @@ jobs:
           git submodule update --init -q
           echo "at $(git rev-parse --short HEAD)"
 
-      - name: resolve the base
+      - name: resolve the base and the label
         id: resolve
         env:
           BASE: ${{ inputs.base }}
           FEATURE: ${{ inputs.feature }}
+          LABEL: ${{ inputs.label }}
         run: |
+          # Name it from the refs as given, before fork-point becomes a hash.
+          [ -n "$LABEL" ] || LABEL=$(bash /home/debian/geth-benchmark/scripts/mklabel.sh \
+            "$FEATURE" "$BASE")
+          echo "label=$LABEL" >> "$GITHUB_OUTPUT"
+          echo "label: $LABEL"
+
           cd /home/debian/go-ethereum
           git fetch -q origin --tags
           if [ "$BASE" = fork-point ]; then
@@ -84,7 +92,7 @@ jobs:
           BASE: ${{ steps.resolve.outputs.base }}
           BASE_LABEL: ${{ steps.resolve.outputs.base_label }}
           FEATURE: ${{ inputs.feature }}
-          LABEL: ${{ inputs.label }}
+          LABEL: ${{ steps.resolve.outputs.label }}
           BLOCKS: ${{ inputs.blocks }}
           RUNS: ${{ inputs.runs }}
           GETH_ARGS: ${{ inputs.geth_args }}
@@ -104,7 +112,7 @@ jobs:
       - name: report
         if: always()
         env:
-          LABEL: ${{ inputs.label }}
+          LABEL: ${{ steps.resolve.outputs.label }}
         run: |
           # -e is on, and an empty glob fails the pipeline, which would skip the
           # journal fallback on exactly the runs that need it.
@@ -124,7 +132,7 @@ jobs:
         if: always() && env.RESULTS != ''
         uses: actions/upload-artifact@v4
         with:
-          name: bench-${{ inputs.label }}-${{ github.run_id }}
+          name: bench-${{ steps.resolve.outputs.label }}-${{ github.run_id }}
           path: |
             ${{ env.RESULTS }}/report.md
             ${{ env.RESULTS }}/bench-meta.json

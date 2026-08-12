@@ -20,33 +20,45 @@ builds `origin/master`, not upstream.
 Everything below runs from your laptop and goes over `tsh`.
 
 ```bash
-bash scripts/run.sh --base master --feature my-branch --label my-label
+bash scripts/run.sh --base master --feature my-branch
+```
+
+It names the run after the two refs and prints the name, which is what groups it
+on disk:
+
+```
+label: my-branch-vs-master
+started. it takes about 40 minutes.
 ```
 
 ```bash
-bash scripts/progress.sh my-label
+bash scripts/progress.sh
 ```
 
 ```bash
-bash scripts/latest-report.sh my-label
+bash scripts/latest-report.sh my-branch-vs-master
 ```
 
 That is the whole workflow. `run.sh` returns immediately, `progress.sh` prints one
-line, and the report is markdown ready to paste into a PR.
+line for whatever is running, and the report is markdown ready to paste into a PR.
 
 ```
 active  pass 4/7 (run 2 feature)  6412/14000 blocks  45%
 ```
 
-One run at a time. A second launch is refused, because there is one datadir and
-one port pair.
+Or start it from the Actions tab, which takes the same options and leaves the
+report in the job summary: **Actions -> bench -> Run workflow**. That needs write
+access to this repo, since a benchmark builds and runs the ref it is given.
+
+One run at a time, because there is one datadir and one port pair. A second launch
+from the command line is refused, and a second dispatch queues behind the first.
 
 ## Options
 
 | | |
 |---|---|
 | `--base`, `--feature` | the two refs. Branch, tag or commit. Required. |
-| `--label` | groups the run under `benchmarks/<label>/`. Required. Re-using one keeps the earlier runs. |
+| `--label` | groups the run under `benchmarks/<label>/`. Defaults to `<feature>-vs-<base>`. Re-using one keeps the earlier runs. |
 | `--base-label`, `--feature-label` | what the report heading calls each side. Default to the ref. |
 | `--geth-args` | extra flags for the geth under test, applied to both sides. |
 | `--blocks`, `--runs`, `--warmup` | 2000, 3, and the same as `--blocks`. |
@@ -92,8 +104,8 @@ it and again without, then compare the two per-run tables.
 
 ## Watching a run
 
-`progress.sh` covers most of it. Pass 1 is the warmup, then two per run, so
-`--runs 3` is seven passes.
+`progress.sh` covers most of it, and with no label it reports whatever is running.
+Pass 1 is the warmup, then two per run, so `--runs 3` is seven passes.
 
 For live per-block output, tagged with the pass it belongs to:
 

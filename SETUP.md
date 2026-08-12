@@ -273,19 +273,65 @@ taskset -pc $(systemctl show geth-bench -p MainPID --value)   # 0-19 for geth
 
 Still run paired A/B in alternating order. It matters more than any of the above.
 
+## 8. GitHub Actions runner
+
+`.github/workflows/bench.yml` starts a run from the Actions tab. Dispatch needs
+write access to this repo, and that is the whole gate: a benchmark builds and
+runs whatever ref it is handed, as a user with passwordless root.
+
+Download and check it, with the sha from the release notes:
+
+```bash
+V=2.336.0
+mkdir -p /home/debian/actions-runner && cd /home/debian/actions-runner
+curl -fLO "https://github.com/actions/runner/releases/download/v$V/actions-runner-linux-x64-$V.tar.gz"
+sha256sum "actions-runner-linux-x64-$V.tar.gz"
+tar xzf "actions-runner-linux-x64-$V.tar.gz"
+```
+
+Then register it, with a token from Settings -> Actions -> Runners -> New
+self-hosted runner. The token expires in an hour, so take it when you are ready
+to paste it:
+
+```bash
+./config.sh --url https://github.com/jrhea/geth-benchmark --token <TOKEN> --labels bench-box --unattended
+sudo ./svc.sh install debian && sudo ./svc.sh start
+```
+
+`--name` defaults to the hostname, which is what we want. `--labels bench-box` has
+to match the workflow's `runs-on: [self-hosted, bench-box]`, and a mismatch does
+not fail loudly: the job sits queued until it is cancelled a day later.
+
+Check that it is listening and that the service is in `system.slice`, where it
+cannot take cores from `bench.slice`:
+
+```bash
+U=actions.runner.jrhea-geth-benchmark.geth-benchmark-1
+systemctl show $U -p Slice && sudo journalctl -u $U -n 5 -o cat
+```
+
+Two things the workflow does on purpose. It updates `/home/debian/geth-benchmark`
+with `git reset --hard` instead of checking out into the runner's workspace,
+because `blockcache.service` and the bench scripts are served from that path, so
+local edits there are discarded on every run. And it launches the benchmark
+through `systemd-run --slice=bench.slice --wait`, which puts the run on the bench
+cores rather than in the runner's cgroup, and keeps the job alive for as long as
+the run.
+
 ## Not done
 
 - Why `systemctl stop` silently no-ops from inside a systemd unit. Routed around,
   not explained.
 - Patch the harness to pin geth and reth-bench to separate cores (they share 0-19).
-- A way for other people to request runs. See the notes below.
-- Run-request system. Must be serialized: one datadir, one port pair, two
-  concurrent runs corrupt each other while both look fine. Options cheapest
-  first: self-hosted GitHub Actions runner with `workflow_dispatch`, PR comment
-  bot, Discord bot. Discord: use the gateway/WebSocket so the bot dials out and
-  needs no inbound port; must ACK in 3s, token expires at 15 min, runs take ~1h,
-  so post results as a new message. Ref inputs are the security boundary, they
-  get built and executed on a box holding the datadir, a Teleport identity, and
-  an OpenBao agent.
+- Benchmarking other people's forks. Refs resolve against `origin` only, so an
+  `owner:ref` form has to be added along with an allowlist of forks committed
+  here. Ref inputs are the security boundary: they get built and executed on a box
+  holding the datadir, a Teleport identity and an OpenBao agent, so they must
+  resolve only against allowlisted remotes. GitHub cannot derive an approver list
+  from another repo's ACL, so that list lives here too.
+- A friendlier front end than the Actions tab. Cheapest is a Discord bot that
+  fires `workflow_dispatch`, over the gateway so it dials out and needs no inbound
+  port. It has to ACK in 3s and its interaction token dies at 15 min while a run
+  takes about an hour, so results go out as a new message rather than a follow-up.
 
 
