@@ -47,23 +47,27 @@ jobs:
       # The deployed clone is the one the systemd units point at, so update it
       # rather than using a second checkout in the runner's workspace.
       - name: update the box's clone
+        env:
+          REF: ${{ github.ref_name }}
         run: |
           cd /home/debian/geth-benchmark
           git fetch -q origin
-          git reset -q --hard origin/${{ github.ref_name }}
-          git submodule update --init --depth 1 -q
+          git reset -q --hard "origin/$REF"
+          git submodule update --init -q
           echo "at $(git rev-parse --short HEAD)"
 
       - name: resolve the base
         id: resolve
+        env:
+          BASE: ${{ inputs.base }}
+          FEATURE: ${{ inputs.feature }}
         run: |
           cd /home/debian/go-ethereum
           git fetch -q origin --tags
-          BASE='${{ inputs.base }}'
           if [ "$BASE" = fork-point ]; then
-            F=$(git rev-parse --verify -q "origin/${{ inputs.feature }}" \
-             || git rev-parse --verify -q "${{ inputs.feature }}") \
-             || { echo "cannot resolve ${{ inputs.feature }}"; exit 1; }
+            F=$(git rev-parse --verify -q "origin/$FEATURE" \
+             || git rev-parse --verify -q "$FEATURE") \
+             || { echo "cannot resolve $FEATURE"; exit 1; }
             BASE=$(git merge-base origin/master "$F") \
              || { echo "no common ancestor with master"; exit 1; }
             echo "base_label=fork point" >> "$GITHUB_OUTPUT"
@@ -76,23 +80,35 @@ jobs:
       # --wait blocks until the unit exits and propagates its status, so the job
       # reflects the run rather than just the launch.
       - name: run it
+        env:
+          BASE: ${{ steps.resolve.outputs.base }}
+          BASE_LABEL: ${{ steps.resolve.outputs.base_label }}
+          FEATURE: ${{ inputs.feature }}
+          LABEL: ${{ inputs.label }}
+          BLOCKS: ${{ inputs.blocks }}
+          RUNS: ${{ inputs.runs }}
+          GETH_ARGS: ${{ inputs.geth_args }}
         run: |
           sudo systemd-run --unit=bench --slice=bench.slice \
             --uid=debian --gid=debian --collect --wait \
             --property=TimeoutStopSec=infinity \
-            --setenv=BASE='${{ steps.resolve.outputs.base }}' \
-            --setenv=BASE_LABEL='${{ steps.resolve.outputs.base_label }}' \
-            --setenv=FEATURE='${{ inputs.feature }}' \
-            --setenv=LABEL='${{ inputs.label }}' \
-            --setenv=BLOCKS='${{ inputs.blocks }}' \
-            --setenv=RUNS='${{ inputs.runs }}' \
-            --setenv=GETH_ARGS='${{ inputs.geth_args }}' \
+            --setenv=BASE="$BASE" \
+            --setenv=BASE_LABEL="$BASE_LABEL" \
+            --setenv=FEATURE="$FEATURE" \
+            --setenv=LABEL="$LABEL" \
+            --setenv=BLOCKS="$BLOCKS" \
+            --setenv=RUNS="$RUNS" \
+            --setenv=GETH_ARGS="$GETH_ARGS" \
             bash /home/debian/geth-benchmark/scripts/bench.sh
 
       - name: report
         if: always()
+        env:
+          LABEL: ${{ inputs.label }}
         run: |
-          D=$(ls -1dt /home/debian/benchmarks/'${{ inputs.label }}'/results/*/ 2>/dev/null | head -1)
+          # -e is on, and an empty glob fails the pipeline, which would skip the
+          # journal fallback on exactly the runs that need it.
+          D=$(ls -1dt /home/debian/benchmarks/"$LABEL"/results/*/ 2>/dev/null | head -1 || true)
           D=${D%/}
           if [ -n "$D" ] && [ -f "$D/report.md" ]; then
             cat "$D/report.md" >> "$GITHUB_STEP_SUMMARY"
