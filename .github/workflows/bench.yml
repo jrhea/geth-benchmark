@@ -1,5 +1,9 @@
 name: bench
 
+# Titles the run in the list. It is evaluated before the job starts, so it cannot
+# use the label the run derives, only what was typed.
+run-name: ${{ inputs.label || format('{0} vs {1}', inputs.feature, inputs.base) }}
+
 # Dispatch only. No pull_request or issue_comment trigger: a benchmark builds and
 # runs whatever ref it is given, on a box where debian has passwordless root, so
 # the ability to start one is the ability to run code there. Dispatch requires
@@ -69,6 +73,8 @@ jobs:
             "$FEATURE" "$BASE")
           echo "label=$LABEL" >> "$GITHUB_OUTPUT"
           echo "label: $LABEL"
+          # the exact one, which run-name cannot know
+          echo "label \`$LABEL\`" >> "$GITHUB_STEP_SUMMARY"
 
           cd /home/debian/go-ethereum
           git fetch -q origin --tags
