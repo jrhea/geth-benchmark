@@ -12,26 +12,26 @@ on:
   workflow_dispatch:
     inputs:
       feature_fork:
-        description: "whose go-ethereum the feature is in"
+        description: "feature fork"
         type: choice
         options: ["ethereum", "cskiraly", "fjl", "healthykim", "jrhea",
                   "lightclient", "MariusVanDerWijden", "rjl493456442"]
-        default: jrhea
+        default: ethereum
       feature:
-        description: "branch, tag or commit to measure"
+        description: "feature branch, tag, or commit to measure"
         required: true
       base_fork:
-        description: "whose go-ethereum the base is in. Ignored for 'fork-point'"
+        description: "base fork"
         type: choice
         options: ["ethereum", "cskiraly", "fjl", "healthykim", "jrhea",
                   "lightclient", "MariusVanDerWijden", "rjl493456442"]
-        default: jrhea
+        default: ethereum
       base:
-        description: "branch, tag or commit to compare against, or 'fork-point'"
+        description: "base branch, tag, or commit to measure"
         required: true
         default: fork-point
       label:
-        description: "groups the run under benchmarks/<label>/. Empty names it after the refs"
+        description: "label (optional)"
         required: false
         default: ""
       blocks:
@@ -102,19 +102,20 @@ jobs:
           cd /home/debian/go-ethereum
           git fetch -q origin --tags
           if [ "$BASE" = fork-point ]; then
-            F=$(bash "$R/resolve-ref.sh" "$FEATURE") \
-             || { echo "cannot resolve $FEATURE"; exit 1; }
-            BASE=$(git merge-base origin/master "$F") \
-             || { echo "no common ancestor with master"; exit 1; }
+            # master from the same repo as the feature, so base_fork does not
+            # apply here
+            FP=$(bash "$R/fork-point.sh" "$FEATURE") || exit 1
+            set -- $FP
+            BASE=$1
             echo "base_label=fork point" >> "$GITHUB_OUTPUT"
-            echo "fork point: $BASE ($(git rev-list --count "$BASE..origin/master") behind master)"
+            echo "fork point: $BASE ($3 commits behind master)"
           else
             echo "base_label=" >> "$GITHUB_OUTPUT"
           fi
           echo "base=$BASE" >> "$GITHUB_OUTPUT"
 
-      # --wait blocks until the unit exits and propagates its status, so the job
-      # reflects the run rather than just the launch.
+      # WAIT makes start-bench.sh block until the unit exits and return its
+      # status, so the job reflects the run rather than just the launch.
       - name: run it
         env:
           BASE: ${{ steps.resolve.outputs.base }}
@@ -124,18 +125,8 @@ jobs:
           BLOCKS: ${{ inputs.blocks }}
           RUNS: ${{ inputs.runs }}
           GETH_ARGS: ${{ inputs.geth_args }}
-        run: |
-          sudo systemd-run --unit=bench --slice=bench.slice \
-            --uid=debian --gid=debian --collect --wait \
-            --property=TimeoutStopSec=infinity \
-            --setenv=BASE="$BASE" \
-            --setenv=BASE_LABEL="$BASE_LABEL" \
-            --setenv=FEATURE="$FEATURE" \
-            --setenv=LABEL="$LABEL" \
-            --setenv=BLOCKS="$BLOCKS" \
-            --setenv=RUNS="$RUNS" \
-            --setenv=GETH_ARGS="$GETH_ARGS" \
-            bash /home/debian/geth-benchmark/scripts/bench.sh
+          WAIT: 1
+        run: bash /home/debian/geth-benchmark/scripts/start-bench.sh
 
       - name: report
         if: always()

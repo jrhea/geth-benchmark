@@ -70,17 +70,8 @@ fi
 # both refs fetched, so a laptop that has not fetched the branch cannot produce a
 # stale answer here.
 if [ "$BASE" = fork-point ] || [ "$BASE" = forkpoint ]; then
-  echo "resolving the fork point of $FEATURE against origin/master..."
-  RESOLVED=$(tsh ssh "$HOST" "bash -s $(printf %q "$FEATURE")" <<'REMOTE'
-set -uo pipefail
-cd /home/debian/go-ethereum || exit 1
-git fetch -q origin --tags 2>/dev/null
-F=$(bash /home/debian/geth-benchmark/scripts/resolve-ref.sh "$1") || exit 1
-MB=$(git merge-base origin/master "$F") || {
-  echo "no common ancestor between origin/master and $1" >&2; exit 1; }
-echo "$MB $F $(git rev-list --count "$MB..origin/master")"
-REMOTE
-  ) || exit 1
+  echo "resolving the fork point of $FEATURE..."
+  RESOLVED=$(tsh ssh "$HOST" "bash /home/debian/geth-benchmark/scripts/fork-point.sh $(printf %q "$FEATURE")") || exit 1
   set -- $RESOLVED
   BASE=$1; FEAT_SHA=$2; BEHIND=$3
   if [ "$BASE" = "$FEAT_SHA" ]; then
@@ -88,27 +79,23 @@ REMOTE
     exit 1
   fi
   BASE_LABEL="${BASE_LABEL:-fork point}"
-  echo "  $BASE  ($BEHIND commits behind origin/master)"
+  echo "  $BASE  ($BEHIND commits behind master)"
 fi
 
-# Only set what was asked for, so bench.sh keeps its own defaults.
-SETENV=()
-add() { [ -n "$2" ] && SETENV+=("--setenv=$1=$2"); return 0; }
+# Only pass what was asked for, so bench.sh keeps its own defaults. start-bench.sh
+# turns these into the unit's environment and owns its properties.
+VARS=()
+add() { [ -n "$2" ] && VARS+=("$1=$2"); return 0; }
 add BASE "$BASE";                 add FEATURE "$FEATURE"
 add LABEL "$LABEL";               add BASE_LABEL "$BASE_LABEL"
 add FEATURE_LABEL "$FEATURE_LABEL"; add GETH_ARGS "$GETH_ARGS"
 add BLOCKS "$BLOCKS";             add RUNS "$RUNS"
 add WARMUP "$WARMUP"
 
-# bench.slice keeps it off the housekeeping cores, TimeoutStopSec=infinity keeps
-# systemd from killing a geth that is still flushing.
-CMD="sudo systemd-run --unit=bench --slice=bench.slice --uid=debian --gid=debian"
-CMD="$CMD --collect --property=TimeoutStopSec=infinity"
-for e in "${SETENV[@]}"; do CMD="$CMD $(printf '%q' "$e")"; done
-CMD="$CMD bash $REMOTE/bench.sh"
+CMD=
+for e in "${VARS[@]}"; do CMD="$CMD$(printf '%q' "$e") "; done
+CMD="${CMD}bash $REMOTE/start-bench.sh"
 
-# The box runs whatever is in its clone, so bring it up to date first. A dispatch
-# from the Actions tab does the same, and either way local edits there are lost.
 if [ -n "$DRY" ]; then printf '%s\n' "$CMD"; exit 0; fi
 
 tsh ssh "$HOST" "$CMD" || exit 1

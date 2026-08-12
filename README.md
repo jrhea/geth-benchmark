@@ -14,8 +14,9 @@ reports the difference. One run takes about 40 minutes.
 
 ## Run one
 
-Push both refs to `jrhea/go-ethereum` first. That includes `master`: the box
-builds `origin/master`, not upstream.
+A ref with no owner resolves in `jrhea/go-ethereum`, so push your branch there
+first. That includes `master`, which means that fork's rather than upstream's.
+Prefix an owner to read a ref from someone else's fork instead.
 
 Everything below runs from your laptop and goes over `tsh`.
 
@@ -73,13 +74,15 @@ whatever landed in master since you branched:
 bash scripts/run.sh --base fork-point --feature my-branch
 ```
 
-It resolves `git merge-base origin/master <feature>` on the box, whose clone is the
-one that builds, so a laptop that has not fetched the branch cannot give a stale
-answer. It prints what it picked and how far behind master that is:
+It resolves the merge base on the box, whose clone is the one that builds, so a
+laptop that has not fetched the branch cannot give a stale answer. `master` comes
+from the same repo as the feature, so a branch in someone's fork is measured
+against their master, which means `base fork` does not apply to `fork-point`. It
+prints what it picked and how far behind master that is:
 
 ```
-resolving the fork point of my-branch against origin/master...
-  cae76d5a3c3c7baad83bde2bd6c2d3ae8baca7d3  (0 commits behind origin/master)
+resolving the fork point of my-branch...
+  cae76d5a3c3c7baad83bde2bd6c2d3ae8baca7d3  (0 commits behind master)
 ```
 
 `0 commits behind` means the branch is rebased on current master, so the fork point
