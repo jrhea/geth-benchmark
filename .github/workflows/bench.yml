@@ -1,0 +1,116 @@
+name: bench
+
+# Dispatch only. No pull_request or issue_comment trigger: a benchmark builds and
+# runs whatever ref it is given, on a box where debian has passwordless root, so
+# the ability to start one is the ability to run code there. Dispatch requires
+# write access to this repo, which is the gate.
+on:
+  workflow_dispatch:
+    inputs:
+      feature:
+        description: "ref to measure (branch, tag or commit)"
+        required: true
+      base:
+        description: "ref to compare against, or fork-point"
+        required: true
+        default: fork-point
+      label:
+        description: "groups the run under benchmarks/<label>/"
+        required: true
+      blocks:
+        description: "payload size"
+        type: choice
+        options: ["2000", "1000", "20000"]
+        default: "2000"
+      runs:
+        description: "runs per side"
+        type: choice
+        options: ["3", "1", "2", "5"]
+        default: "3"
+      geth_args:
+        description: "extra geth flags, applied to both sides"
+        required: false
+        default: ""
+
+# One datadir and one port pair, so runs are serialized rather than cancelled.
+# bench.sh also holds an flock, which is what protects against a manual launch
+# that this group cannot see.
+concurrency:
+  group: bench
+  cancel-in-progress: false
+
+jobs:
+  bench:
+    runs-on: [self-hosted, bench-box]
+    timeout-minutes: 180
+    steps:
+      # The deployed clone is the one the systemd units point at, so update it
+      # rather than using a second checkout in the runner's workspace.
+      - name: update the box's clone
+        run: |
+          cd /home/debian/geth-benchmark
+          git fetch -q origin
+          git reset -q --hard origin/${{ github.ref_name }}
+          git submodule update --init --depth 1 -q
+          echo "at $(git rev-parse --short HEAD)"
+
+      - name: resolve the base
+        id: resolve
+        run: |
+          cd /home/debian/go-ethereum
+          git fetch -q origin --tags
+          BASE='${{ inputs.base }}'
+          if [ "$BASE" = fork-point ]; then
+            F=$(git rev-parse --verify -q "origin/${{ inputs.feature }}" \
+             || git rev-parse --verify -q "${{ inputs.feature }}") \
+             || { echo "cannot resolve ${{ inputs.feature }}"; exit 1; }
+            BASE=$(git merge-base origin/master "$F") \
+             || { echo "no common ancestor with master"; exit 1; }
+            echo "base_label=fork point" >> "$GITHUB_OUTPUT"
+            echo "fork point: $BASE ($(git rev-list --count "$BASE..origin/master") behind master)"
+          else
+            echo "base_label=" >> "$GITHUB_OUTPUT"
+          fi
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+
+      # --wait blocks until the unit exits and propagates its status, so the job
+      # reflects the run rather than just the launch.
+      - name: run it
+        run: |
+          sudo systemd-run --unit=bench --slice=bench.slice \
+            --uid=debian --gid=debian --collect --wait \
+            --property=TimeoutStopSec=infinity \
+            --setenv=BASE='${{ steps.resolve.outputs.base }}' \
+            --setenv=BASE_LABEL='${{ steps.resolve.outputs.base_label }}' \
+            --setenv=FEATURE='${{ inputs.feature }}' \
+            --setenv=LABEL='${{ inputs.label }}' \
+            --setenv=BLOCKS='${{ inputs.blocks }}' \
+            --setenv=RUNS='${{ inputs.runs }}' \
+            --setenv=GETH_ARGS='${{ inputs.geth_args }}' \
+            bash /home/debian/geth-benchmark/scripts/bench.sh
+
+      - name: report
+        if: always()
+        run: |
+          D=$(ls -1dt /home/debian/benchmarks/'${{ inputs.label }}'/results/*/ 2>/dev/null | head -1)
+          D=${D%/}
+          if [ -n "$D" ] && [ -f "$D/report.md" ]; then
+            cat "$D/report.md" >> "$GITHUB_STEP_SUMMARY"
+            echo "RESULTS=$D" >> "$GITHUB_ENV"
+          else
+            echo "no report was written, see the journal:" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            sudo journalctl -u bench -n 40 -o cat >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: upload the per-block data
+        if: always() && env.RESULTS != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-${{ inputs.label }}-${{ github.run_id }}
+          path: |
+            ${{ env.RESULTS }}/report.md
+            ${{ env.RESULTS }}/bench-meta.json
+            ${{ env.RESULTS }}/**/combined_latency.csv
+          if-no-files-found: warn
