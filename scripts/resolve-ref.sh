@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 #
-# Turn a ref into a commit, fetching from a fork when one is named.
+# Turn a ref into a commit, fetching it from the repo that owns it.
 #
-#   bash resolve-ref.sh my-branch                       a ref in jrhea/go-ethereum
+#   bash resolve-ref.sh master                          upstream go-ethereum
 #   bash resolve-ref.sh rjl493456442:optimize-commit    a ref in someone's fork
+#   bash resolve-ref.sh jrhea:my-branch                 a ref in ours
 #
-# A fork owner has to be listed in forks.txt. Whatever the ref names gets built
-# and run here, so that file is the trust boundary, not this script's parsing.
+# No owner means upstream, so master and tags always mean the canonical ones. A
+# branch of your own needs naming, since upstream does not have it.
 #
-# A fork resolves branches, tags and commits, though a commit has to still be
+# The owner has to be listed in forks.txt. Whatever the ref names gets built and
+# run here, so that file is the trust boundary, not this script's parsing.
+#
+# Branches, tags and commits all resolve, though a commit has to still be
 # reachable from a ref there, which one orphaned by a force push is not.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -20,17 +24,16 @@ SPEC=$(printf '%s' "$SPEC" | tr -d '[:space:]')
 
 case "$SPEC" in
   *:*) OWNER=${SPEC%%:*}; REF=${SPEC#*:} ;;
-  *)   OWNER=; REF=$SPEC ;;
+  *)   OWNER=ethereum;    REF=$SPEC ;;
 esac
 
-# No owner, so it is one of ours. Prefer the remote, since a local branch of the
-# same name can be left over from an earlier run.
-if [ -z "$OWNER" ]; then
-  git -C "$REPO" rev-parse --verify -q "origin/$REF^{commit}" ||
-    git -C "$REPO" rev-parse --verify -q "$REF^{commit}" || {
-      echo "cannot resolve $REF in $REPO" >&2; exit 1; }
-  exit 0
-fi
+# A full hash we already have is that commit, whoever owns it, so there is
+# nothing to fetch. This is the fork point's path, which arrives as a hash.
+case "$REF" in
+  *[!0-9a-f]*) ;;
+  ????????????????????????????????????????)
+    git -C "$REPO" rev-parse --verify -q "$REF^{commit}" && exit 0 ;;
+esac
 
 [ -r "$LIST" ] || { echo "no fork list at $LIST" >&2; exit 1; }
 if ! sed -e 's/#.*//' -e 's/[[:space:]]//g' "$LIST" | grep -qixF "$OWNER"; then

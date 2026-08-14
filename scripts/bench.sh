@@ -121,20 +121,15 @@ log "refs: base=$BASE feature=$FEATURE  blocks=$BLOCKS runs=$RUNS warmup=$WARMUP
 cd /home/debian/go-ethereum
 git fetch -q origin --tags
 git fetch -q upstream 2>/dev/null || true
-# owner:ref names someone else's fork. Resolve it to a commit here, so the rest
-# of this and the harness only ever see a ref this repo already has. The labels
-# were taken above and still read as the ref that was asked for.
-case "$BASE"    in *:*) BASE=$(bash "$HERE/resolve-ref.sh" "$BASE") || exit 1 ;; esac
-case "$FEATURE" in *:*) FEATURE=$(bash "$HERE/resolve-ref.sh" "$FEATURE") || exit 1 ;; esac
-# Move each local branch onto its remote, or a second run of the same branch name
-# builds whatever was checked out the first time. Nothing is developed on this
-# box, so a forced move is safe. Detach first because the harness leaves HEAD on
-# a branch and git will not move the one that is checked out.
-git checkout -q --detach 2>/dev/null || true
-for r in "$BASE" "$FEATURE"; do
-  git rev-parse --verify -q "origin/$r" >/dev/null &&
-    git branch -f "$r" "origin/$r" >/dev/null 2>&1
-  log "  $r -> $(git rev-parse --short "$r" 2>/dev/null || echo UNRESOLVED)"
+# Both refs resolve the same way, so the harness only ever gets a commit. That
+# also settles which repo a name came from, and leaves no local branch that a
+# later run of the same name could pick up stale. The labels were taken above and
+# still read as the ref that was asked for.
+for r in BASE FEATURE; do
+  SPEC=${!r}
+  RESOLVED=$(bash "$HERE/resolve-ref.sh" "$SPEC") || exit 1
+  printf -v "$r" '%s' "$RESOLVED"
+  log "  $SPEC -> $(git rev-parse --short "$RESOLVED")"
 done
 # Pin the commits now. A branch can move between the run and the report.
 BASE_SHA=$(git rev-parse "$BASE" 2>/dev/null || echo "")

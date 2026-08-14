@@ -1,185 +1,231 @@
 # geth-benchmark
 
-Real-block `newPayload` benchmarks for go-ethereum, on the `geth-benchmark-1` box.
+Real-block `newPayload` benchmarks for go-ethereum.
 
-Replays real mainnet blocks into two builds of geth over the engine API and
-reports the difference. One run takes about 40 minutes.
+Two git refs go in, and a report comes out saying which one executes mainnet
+blocks faster. It builds both, replays the same 2000 real mainnet blocks into each
+over the engine API, alternates which side goes first, and repeats three times.
+That takes about 40 minutes and runs on a dedicated box, `geth-benchmark-1`, with
+pinned cores and a fixed clock so that repeated runs are comparable.
 
 | | |
 |---|---|
 | [RESULTS.md](RESULTS.md) | what the report contains and how to read it |
-| [HOW-IT-WORKS.md](HOW-IT-WORKS.md) | the three programs and three endpoints |
+| [HOW-IT-WORKS.md](HOW-IT-WORKS.md) | the programs, the endpoints, and what talks to what |
 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | when a run fails |
 | [SETUP.md](SETUP.md) | the machine, and how it was built |
 
-## Run one
 
-A ref with no owner resolves in `jrhea/go-ethereum`, so push your branch there
-first. That includes `master`, which means that fork's rather than upstream's.
-Prefix an owner to read a ref from someone else's fork instead.
+## Running a benchmark
 
-Everything below runs from your laptop and goes over `tsh`.
+Two ways, same options and same results.
+
+**From the Actions tab**, at **Actions -> bench -> Run workflow**. Fill in the
+form, and the report lands in the run summary when it finishes. This needs write
+access to this repo, because a benchmark builds and executes the ref it is given.
+
+**From your laptop**, over `tsh`:
 
 ```bash
-bash scripts/run.sh --base master --feature my-branch
+bash scripts/run.sh --base fork-point --feature jrhea:trie-prefetch-batch
 ```
 
-It names the run after the two refs and prints the name, which is what groups it
-on disk:
+Say you have a branch called `trie-prefetch-batch` pushed to your fork, and you
+want to know whether it actually helps. That command prints:
 
 ```
-label: my-branch-vs-master
+label: jrhea-trie-prefetch-batch-vs-fork-point
+resolving the fork point of jrhea:trie-prefetch-batch...
+  a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0  (3 commits behind master)
+
 started. it takes about 40 minutes.
+
+  progress:  bash scripts/progress.sh jrhea-trie-prefetch-batch-vs-fork-point
+  report:    bash scripts/latest-report.sh jrhea-trie-prefetch-batch-vs-fork-point
 ```
+
+It returns straight away, and the run keeps going if you close your laptop.
+
+### What to compare
+
+`--base` and `--feature` are the two refs, and both are required. Each takes a
+branch, a tag or a commit.
+
+`--base fork-point` is usually what you want. It finds where your branch diverged
+from master and compares against that, so the difference is your change and not
+whatever else landed in master since you branched. The alternative, `--base
+master`, mixes the two together.
+
+**A bare ref means upstream `ethereum/go-ethereum`**, so `master` and tags always
+mean the canonical ones. Anything living in a fork needs its owner named, your own
+branches included:
+
+```bash
+bash scripts/run.sh --base fork-point --feature jrhea:my-branch
+bash scripts/run.sh --base fork-point --feature rjl493456442:optimize-commit
+```
+
+Push your branch to your fork first, and from the Actions form the owner is the
+fork dropdown instead of a prefix. Only owners listed in [forks.txt](forks.txt)
+resolve, and that file is a trust boundary rather than a convenience: whatever ref
+you name gets fetched, built and executed on the box as a user with passwordless
+root. Adding a line to it is the whole authorization, so it goes through a PR.
+
+### Naming the run
+
+`--label` decides where results are kept, under `benchmarks/<label>/`. Leave it
+out and the run is named after the two refs, which is what the example above did.
+Re-using a label is fine and keeps the earlier runs, since each one gets its own
+timestamped directory inside. Whatever you pass gets cleaned into something safe
+for a directory name, so a label with spaces comes back hyphenated. The label is
+always printed when the run starts.
+
+`--base-label` and `--feature-label` only change what the report heading calls
+each side. Worth setting when a ref reads badly, like a bare commit hash.
+
+### How much to measure
+
+`--blocks` is how many blocks each pass replays, 2000 by default, which is the
+size of the pinned window. `--runs` is how many times each side is measured, 3 by
+default. `--warmup` matches `--blocks` unless you say otherwise.
+
+Leave all three alone for a real measurement. Three runs is what makes a small
+difference believable, and the report has no error bars with fewer. Shrink them
+only for a smoke test:
+
+```bash
+bash scripts/run.sh --base master --feature master --blocks 20 --runs 1
+```
+
+### Measuring under a different configuration
+
+`--geth-args` adds flags to the geth under test. They apply to both sides, so the
+comparison stays about the code:
+
+```bash
+bash scripts/run.sh --base fork-point --feature jrhea:my-branch --geth-args "--cache.noprefetch"
+```
+
+The report records the flags in its header, because a run with them is not
+comparable to one without. To measure a *flag* rather than a code change, run
+`master` against `master` twice, once with it and once without, then compare the
+two reports.
+
+### Before committing 40 minutes
+
+`--dry-run` prints the command it would run and stops. It still resolves the refs,
+so it also tells you whether your branch and fork point exist.
+
+`bash scripts/run.sh --help` lists every option.
+
+**One run at a time.** There is a single datadir and a single port pair, so a
+second launch from the command line is refused and a second dispatch waits its
+turn.
+
+## Checking progress
+
+The quickest answer, with no arguments at all, reports whatever is running:
 
 ```bash
 bash scripts/progress.sh
 ```
 
-```bash
-bash scripts/latest-report.sh my-branch-vs-master
-```
-
-That is the whole workflow. `run.sh` returns immediately, `progress.sh` prints one
-line for whatever is running, and the report is markdown ready to paste into a PR.
-
 ```
 active  pass 4/7 (run 2 feature)  6412/14000 blocks  45%
 ```
 
-Or start it from the Actions tab, which takes the same options and leaves the
-report in the job summary: **Actions -> bench -> Run workflow**. That needs write
-access to this repo, since a benchmark builds and runs the ref it is given.
-
-One run at a time, because there is one datadir and one port pair. A second launch
-from the command line is refused, and a second dispatch queues behind the first.
-
-## Options
-
-| | |
-|---|---|
-| `--base`, `--feature` | the two refs. Branch, tag, commit, or `owner:ref` for someone else's fork. Required. |
-| `--label` | groups the run under `benchmarks/<label>/`. Defaults to `<feature>-vs-<base>`. Re-using one keeps the earlier runs. |
-| `--base-label`, `--feature-label` | what the report heading calls each side. Default to the ref. |
-| `--geth-args` | extra flags for the geth under test, applied to both sides. |
-| `--blocks`, `--runs`, `--warmup` | 2000, 3, and the same as `--blocks`. |
-| `--dry-run` | print the command instead of running it. |
-
-`bash scripts/run.sh --help` lists the same.
-
-**Compare against the fork point, not master's tip**, to isolate your change from
-whatever landed in master since you branched:
+Pass 1 is the warmup and then there are two per run, so the default `--runs 3` is
+seven passes. Pass a label to ask about a specific benchmark instead:
 
 ```bash
-bash scripts/run.sh --base fork-point --feature my-branch
+bash scripts/progress.sh jrhea-trie-prefetch-batch-vs-fork-point
 ```
-
-It resolves the merge base on the box, whose clone is the one that builds, so a
-laptop that has not fetched the branch cannot give a stale answer. `master` comes
-from the same repo as the feature, so a branch in someone's fork is measured
-against their master, which means `base fork` does not apply to `fork-point`. It
-prints what it picked and how far behind master that is:
-
-```
-resolving the fork point of my-branch...
-  cae76d5a3c3c7baad83bde2bd6c2d3ae8baca7d3  (0 commits behind master)
-```
-
-`0 commits behind` means the branch is rebased on current master, so the fork point
-and master's tip are the same commit. The distinction only bites for a branch that
-has fallen behind.
-
-The heading gets `fork point` rather than the bare hash, unless you pass
-`--base-label` yourself. It refuses if the fork point turns out to be the feature
-commit itself, since there would be nothing to compare.
-
-**`--geth-args` measures your change under a different configuration.** It applies
-to both sides, so the comparison stays about the code, and the report records it
-in the header because a run with it is not comparable to one without:
-
-```bash
-bash scripts/run.sh --base master --feature my-branch --geth-args "--cache.noprefetch"
-```
-
-**To benchmark a branch in someone else's fork**, name the owner with `owner:ref`.
-From the Actions tab they are the two fork dropdowns instead:
-
-```bash
-bash scripts/run.sh --base fork-point --feature rjl493456442:optimize-commit
-```
-
-Only owners listed in [forks.txt](forks.txt) resolve, and that list is the trust
-boundary rather than a convenience: whatever ref you name is fetched, built and
-executed on the box as a user with passwordless root. Adding a line to it is the
-whole authorization, so it goes through a PR.
-
-To measure a *flag* rather than a code change, run `master` against `master` with
-it and again without, then compare the two per-run tables.
-
-## Watching a run
-
-`progress.sh` covers most of it, and with no label it reports whatever is running.
-Pass 1 is the warmup, then two per run, so `--runs 3` is seven passes.
 
 For live per-block output, tagged with the pass it belongs to:
 
 ```bash
-tsh ssh debian@geth-benchmark-1 'tail -f /home/debian/benchmarks/my-branch-vs-master/reth-bench.log'
+tsh ssh debian@geth-benchmark-1 'tail -f /home/debian/benchmarks/jrhea-trie-prefetch-batch-vs-fork-point/reth-bench.log'
 ```
 
-**Expected pace**, so you can tell slow from stuck: a 2000-block pass replays in
-~200s, plus node start, rewind and flush, so **5-6 minutes per pass** and **40
-minutes** for seven. A run that ends in under 20 minutes failed, see
-[TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+For what the runner itself is doing, including the builds:
 
-## Reading results
+```bash
+tsh ssh debian@geth-benchmark-1 'sudo journalctl -u bench -f -o cat'
+```
+
+A run started from the Actions tab needs the same commands to watch it. Its `run
+it` step prints `Running as unit: bench.service` and then nothing until the run
+ends, because the output goes to the box's journal rather than back to the runner.
+The label does show up in the run summary as soon as it is resolved, which is the
+one thing the page is good for while you wait.
+
+**Expected pace**, so you can tell slow from stuck: a 2000-block pass replays in
+about 200s, plus node start, rewind and flush, so **5-6 minutes per pass** and
+**40 minutes** for seven. A run that ends in under 20 minutes failed, and
+[TROUBLESHOOTING.md](TROUBLESHOOTING.md) covers why.
+
+## Viewing results
 
 Reports live with the run that produced them, at
 `benchmarks/<label>/results/<timestamp>/report.md`. What the numbers mean is
 [RESULTS.md](RESULTS.md).
 
 ```bash
+bash scripts/latest-report.sh jrhea-trie-prefetch-batch-vs-fork-point
+```
+
+It prints the newest run's report as markdown, ready to paste into a PR. It
+refuses rather than quietly handing you an older run's report when the newest one
+has not written one yet.
+
+With no label, it lists every benchmark, its most recent run, and whether that run
+produced a report:
+
+```bash
 bash scripts/latest-report.sh
 ```
 
-With no label it lists every benchmark, its most recent run, and whether that run
-has a report:
-
 ```
   LABEL                          LATEST RUN         REPORT
-  my-branch-vs-master            20260805_165916    yes
-  trie-prefetch-vs-fork-point    20260807_174135    yes
-  derp-vs-master                 20260804_195120    not written
+  jrhea-trie-prefetch-batch-... 20260805_165916    yes
+  jrhea-txpool-reheap-vs-master  20260807_174135    yes
+  fjl-slot-cache-vs-fork-point   20260804_195120    not written
 ```
 
-To read it rendered rather than raw in a terminal:
+To read it rendered instead of raw in a terminal:
 
 ```bash
-bash scripts/latest-report.sh my-branch-vs-master > /tmp/report.md && open /tmp/report.md
+bash scripts/latest-report.sh jrhea-trie-prefetch-batch-vs-fork-point > /tmp/report.md && open /tmp/report.md
 ```
 
 An older run, once a label has several:
 
 ```bash
-tsh ssh debian@geth-benchmark-1 'cat /home/debian/benchmarks/my-branch-vs-master/results/20260807_174135/report.md'
+tsh ssh debian@geth-benchmark-1 'cat /home/debian/benchmarks/jrhea-trie-prefetch-batch-vs-fork-point/results/20260807_174135/report.md'
 ```
 
-To regenerate one, after changing `report.py` or to relabel the sides. Pass the
-run directory and it picks the newest results inside:
+Runs started from the Actions tab also attach the report, the metadata and the
+per-block CSVs to the run as an artifact, which is the easiest way to get the raw
+latencies onto your own machine.
+
+To regenerate a report, after changing `report.py` or to relabel the sides. Pass
+the run directory and it picks the newest results inside:
 
 ```bash
-tsh ssh debian@geth-benchmark-1 'python3 /home/debian/geth-benchmark/scripts/report.py --results /home/debian/benchmarks/my-branch-vs-master'
+tsh ssh debian@geth-benchmark-1 'python3 /home/debian/geth-benchmark/scripts/report.py --results /home/debian/benchmarks/jrhea-trie-prefetch-batch-vs-fork-point'
 ```
 
-It needs nothing else because `bench.sh` leaves a `bench-meta.json` holding the
-refs and the commits it built. `--base-label` and `--target-label` override the
-heading.
+It needs nothing else, because each run leaves a `bench-meta.json` holding the
+refs and the commits that were built. `--base-label` and `--target-label` override
+the heading.
 
-## The block window
+## Changing the block window
 
-Every run replays the same blocks, because the node's head is pinned and the
-harness replays what comes after it. If the head drifts, each run silently
-benchmarks a different range.
+Every run replays the same blocks. The node's head is pinned and the harness
+replays what comes after it, so if the head ever drifts, each run quietly
+benchmarks a different range and results stop being comparable.
+
+Where it sits today:
 
 | | |
 |---|---|
@@ -190,36 +236,19 @@ benchmarks a different range.
 | block cache | `/datadrive/blockcache`, served on `127.0.0.1:8600` |
 | datadir backup | `/datadrive/geth-backup`, same pinned state |
 
-Moving it. This one runs on the box under systemd, because syncing to tip can take
-hours and a dropped `tsh` session would kill it partway through:
+Moving it means syncing to tip, which can take hours, so it runs on the box under
+systemd rather than in your `tsh` session where a dropped connection would kill it
+halfway:
 
 ```bash
 tsh ssh debian@geth-benchmark-1 'sudo systemd-run --unit=newwindow --uid=debian --gid=debian --collect --property=TimeoutStopSec=infinity bash /home/debian/geth-benchmark/scripts/new-window.sh --blocks 2000'
 ```
 
+Then watch it:
+
 ```bash
 tsh ssh debian@geth-benchmark-1 'sudo journalctl -u newwindow -f -o cat'
 ```
-
-What it does, in order:
-
-1. Starts geth and blsync and waits until the local head is within 4 blocks of the
-   beacon chain's execution head. This is the slow part.
-2. Picks the pin: `tip - blocks - margin`, or exactly `--pin N`.
-3. Refuses if that rewind is deeper than `--max-rewind`, or if the pin falls below
-   the snap-sync pivot floor, where there is no state to execute from.
-4. Caches the blocks *before* rewinding, from `pin - 64` through `pin + blocks`.
-   The rewind deletes them from the node, and reth-bench reads N-32 and N-64 for
-   the safe and finalized hashes, hence the 64 below.
-5. Fetches those blocks' EIP-7685 execution requests from the beacon chain and
-   checks each against the block's own `requestsHash`.
-6. Stops blsync and confirms it stopped, then rewinds with `debug_setHead`. blsync
-   running during a rewind leaves the datadir unrecoverable.
-7. Stops geth, waits out the flush however long it takes, and checks the log for a
-   clean shutdown.
-8. Starts the block cache and prints the rows to record.
-
-It looks like this:
 
 ```
 [12:08:47] starting geth + blsync
@@ -237,18 +266,23 @@ verified all 155 block(s), 158 request item(s)
 [12:31:32] starting the cache server
 ```
 
-Step 8 also writes `benchmarks/window.env`, which is where the pinned head and
-window size actually live:
+What it does, in order:
 
-```
-PIN=25677500
-BLOCKS=2000
-```
-
-`bench.sh` reads it and refuses to start without it, so a window move cannot leave
-a benchmark rewinding to the previous pin. Passing `--blocks` still wins, which is
-how a 20-block smoke test works. The table above is for humans; this file is what
-the scripts use, so update the table to match after moving the window.
+1. Starts geth and blsync and waits until the local head is within 4 blocks of the
+   beacon chain's execution head. This is the slow part.
+2. Picks the pin: `tip - blocks - margin`, or exactly `--pin N`.
+3. Refuses if that rewind is deeper than `--max-rewind`, or if the pin falls below
+   the snap-sync pivot floor, where there is no state left to execute from.
+4. Caches the blocks *before* rewinding, from `pin - 64` through `pin + blocks`.
+   The rewind deletes them from the node, and reth-bench reads N-32 and N-64 for
+   the safe and finalized hashes, hence the 64.
+5. Fetches those blocks' EIP-7685 execution requests from the beacon chain and
+   checks each against the block's own `requestsHash`.
+6. Stops blsync and confirms it stopped, then rewinds with `debug_setHead`. blsync
+   running during a rewind leaves the datadir unrecoverable.
+7. Stops geth, waits out the flush however long it takes, and checks the log for a
+   clean shutdown.
+8. Starts the block cache and prints the rows to record.
 
 Useful options, with the rest under `--help`:
 
@@ -260,40 +294,75 @@ Useful options, with the rest under `--help`:
 | `--max-rewind N` | refuse to rewind further than this, default 50000 |
 | `--datadir PATH` | work on a copy instead of `/datadrive/geth` |
 
+Step 8 writes `benchmarks/window.env`, which is where the pinned head and window
+size actually live:
+
+```
+PIN=25677500
+BLOCKS=2000
+```
+
+Benchmarks read that file and refuse to start without it, so moving the window
+cannot leave a run rewinding to the previous pin. The table above is for humans,
+so update it to match after a move.
+
 **Only shallow rewinds on this datadir.** `setHead` deletes bodies and receipts
 above the new head, so a deep rewind destroys months of chain data and getting
-back to tip means a fresh snap sync. For an older window, copy the datadir and
-run against the copy, with `--datadir` and a larger `--max-rewind`. A copy is
-~690 GB, about 10 minutes, and 8 fit in free space.
+back to tip means a fresh snap sync. To benchmark an older window, copy the
+datadir and work on the copy with `--datadir` and a larger `--max-rewind`. A copy
+is about 690 GB and ten minutes, and eight fit in free space.
 
 Restoring the backup, with geth stopped:
 
 ```bash
-sudo rm -rf /datadrive/geth && sudo cp -a /datadrive/geth-backup /datadrive/geth
+tsh ssh debian@geth-benchmark-1 'sudo rm -rf /datadrive/geth && sudo cp -a /datadrive/geth-backup /datadrive/geth'
 ```
 
-## The maintenance node
+## Maintenance
 
-geth and blsync are stopped between benchmarks and disabled at boot, so nothing
-moves the pinned head. `bench.sh` stops them itself, so you only need these to
-let the node follow the chain again:
-
-```bash
-sudo systemctl start geth-bench blsync-bench
-```
-
-```bash
-sudo systemctl stop blsync-bench geth-bench
-```
-
-Stop blsync first, and confirm geth flushed cleanly:
-
-```bash
-sudo journalctl -u geth-bench -n 20 -o cat | grep -E "Persisted|Blockchain stopped"
-```
-
-Health check, from your laptop:
+Start with the health check, which reports the services, the head, disk and
+whether the performance settings survived the last reboot:
 
 ```bash
 bash scripts/status.sh
+```
+
+```
+services
+  geth-bench     inactive   slice=bench.slice
+  blsync-bench   inactive   slice=system.slice
+
+head
+  local  25677500
+  behind (no age in recent log, likely at tip)
+
+disk
+  root    1.3T used, 5.3T free (20%)
+  datadir 646G
+
+performance settings
+  governor  performance  (want: performance)
+  boost     0  (1 = on)
+```
+
+`inactive` is the correct state between benchmarks. geth and blsync are stopped
+and disabled at boot so that nothing moves the pinned head, and a benchmark stops
+them itself before it starts. You only need to start them by hand to let the node
+follow the chain again:
+
+```bash
+tsh ssh debian@geth-benchmark-1 'sudo systemctl start geth-bench blsync-bench'
+```
+
+Stopping them, blsync first, since it must not be writing during a rewind:
+
+```bash
+tsh ssh debian@geth-benchmark-1 'sudo systemctl stop blsync-bench geth-bench'
+```
+
+geth can take minutes to flush. Confirm it got there before doing anything else
+with the datadir:
+
+```bash
+tsh ssh debian@geth-benchmark-1 'sudo journalctl -u geth-bench -n 20 -o cat | grep -E "Persisted|Blockchain stopped"'
 ```

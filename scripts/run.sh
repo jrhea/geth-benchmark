@@ -8,9 +8,10 @@
 #                       fork-point for where --feature diverged from master.
 #   --feature REF       what to measure.
 #
-#   Either takes owner:ref to read it from someone else's go-ethereum, as long as
-#   they are listed in forks.txt:
+#   A bare ref means upstream go-ethereum, so name the owner for anything else,
+#   including your own. Owners have to be listed in forks.txt:
 #
+#     bash run.sh --base fork-point --feature jrhea:my-branch
 #     bash run.sh --base fork-point --feature rjl493456442:optimize-commit
 #
 #   --label NAME        groups the run under /home/debian/benchmarks/NAME/.

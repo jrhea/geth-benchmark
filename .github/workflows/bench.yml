@@ -84,13 +84,10 @@ jobs:
           LABEL: ${{ inputs.label }}
         run: |
           R=/home/debian/geth-benchmark/scripts
-          # Someone else's fork becomes an owner:ref spec. jrhea is this repo's
-          # own origin, and fork-point is a keyword rather than a branch, so
-          # neither takes one.
-          [ "$FEATURE_FORK" = jrhea ] || FEATURE="$FEATURE_FORK:$FEATURE"
-          if [ "$BASE" != fork-point ] && [ "$BASE_FORK" != jrhea ]; then
-            BASE="$BASE_FORK:$BASE"
-          fi
+          # The dropdown already names the repo, so spell it out either way.
+          # fork-point is a keyword rather than a branch, so it never takes one.
+          FEATURE="$FEATURE_FORK:$FEATURE"
+          [ "$BASE" = fork-point ] || BASE="$BASE_FORK:$BASE"
           echo "feature=$FEATURE" >> "$GITHUB_OUTPUT"
 
           # Name it from the refs as given, before fork-point becomes a hash. A
