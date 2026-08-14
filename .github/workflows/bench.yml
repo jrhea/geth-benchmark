@@ -158,5 +158,6 @@ jobs:
           path: |
             ${{ env.RESULTS }}/report.md
             ${{ env.RESULTS }}/bench-meta.json
+            ${{ env.RESULTS }}/slowblock.log
             ${{ env.RESULTS }}/**/combined_latency.csv
           if-no-files-found: warn
