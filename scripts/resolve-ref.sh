@@ -15,6 +15,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="${GETH_REPO:-/home/debian/go-ethereum}"
 LIST="${FORKS:-$HERE/../forks.txt}"
 SPEC="${1:?usage: resolve-ref.sh [owner:]ref}"
+# A pasted ref often carries whitespace, and no git ref may contain any.
+SPEC=$(printf '%s' "$SPEC" | tr -d '[:space:]')
 
 case "$SPEC" in
   *:*) OWNER=${SPEC%%:*}; REF=${SPEC#*:} ;;

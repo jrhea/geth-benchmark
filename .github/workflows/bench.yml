@@ -93,8 +93,13 @@ jobs:
           fi
           echo "feature=$FEATURE" >> "$GITHUB_OUTPUT"
 
-          # Name it from the refs as given, before fork-point becomes a hash.
-          [ -n "$LABEL" ] || LABEL=$(bash "$R/mklabel.sh" "$FEATURE" "$BASE")
+          # Name it from the refs as given, before fork-point becomes a hash. A
+          # given label becomes a directory name too, so it gets cleaned as well.
+          if [ -n "$LABEL" ]; then
+            LABEL=$(bash "$R/mklabel.sh" "$LABEL")
+          else
+            LABEL=$(bash "$R/mklabel.sh" "$FEATURE" "$BASE")
+          fi
           echo "label=$LABEL" >> "$GITHUB_OUTPUT"
           echo "label: $LABEL"
           # the exact one, which run-name cannot know

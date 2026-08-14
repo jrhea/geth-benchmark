@@ -32,7 +32,16 @@ GETH_PROC="/[g]eth(_[0-9a-f]+)? --datadir"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BASE="${BASE:?set BASE}"
 FEATURE="${FEATURE:?set FEATURE}"
-LABEL="${LABEL:-$(bash "$HERE/mklabel.sh" "$FEATURE" "$BASE")}"
+# A pasted ref often carries whitespace, and no git ref may contain any.
+BASE=$(printf '%s' "$BASE" | tr -d '[:space:]')
+FEATURE=$(printf '%s' "$FEATURE" | tr -d '[:space:]')
+# The label becomes a directory name, so a given one goes through the same
+# cleaning as a derived one.
+if [ -n "${LABEL:-}" ]; then
+  LABEL=$(bash "$HERE/mklabel.sh" "$LABEL")
+else
+  LABEL=$(bash "$HERE/mklabel.sh" "$FEATURE" "$BASE")
+fi
 RUNS="${RUNS:-3}"
 # extra flags for the geth under test, applied to both sides
 GETH_ARGS="${GETH_ARGS:-}"
@@ -223,7 +232,7 @@ reth-bench-compare --client geth \
 RC=$?
 kill "$EARLY" 2>/dev/null; wait "$EARLY" 2>/dev/null
 log "harness exit=$RC"
-RES=$(ls -1dt $OUT/results/*/ 2>/dev/null | head -1)
+RES=$(ls -1dt "$OUT"/results/*/ 2>/dev/null | head -1)
 RES="${RES%/}"
 log "results: $RES"
 log "slow-block lines: $(grep -c execution_ms "$SB" 2>/dev/null || echo 0)"

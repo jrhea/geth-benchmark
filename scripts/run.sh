@@ -61,10 +61,13 @@ tsh ssh "$HOST" "cd $REPO && git fetch -q origin && git reset -q --hard origin/m
 
 # Name it after the refs as they were given, before fork-point turns into a hash,
 # so this and the workflow agree on where the run lands.
-if [ -z "$LABEL" ]; then
+if [ -n "$LABEL" ]; then
+  # it becomes a directory name, so clean a given one the same way
+  LABEL=$(bash "$HERE/mklabel.sh" "$LABEL") || exit 1
+else
   LABEL=$(bash "$HERE/mklabel.sh" "$FEATURE" "$BASE") || exit 1
-  echo "label: $LABEL"
 fi
+echo "label: $LABEL"
 
 # Resolve the fork point on the box. Its clone is the one that builds, and it has
 # both refs fetched, so a laptop that has not fetched the branch cannot produce a
