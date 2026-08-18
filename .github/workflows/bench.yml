@@ -131,6 +131,16 @@ jobs:
           WAIT: 1
         run: bash /home/debian/geth-benchmark/scripts/start-bench.sh
 
+      # Cancelling the job kills the step, not the unit it started. Without this
+      # the benchmark carries on and the next dispatch collides with it.
+      # --no-block returns straight away, so a long geth flush cannot outlast the
+      # grace period Actions gives a cancelled job.
+      - name: stop the benchmark if the job was cancelled
+        if: cancelled()
+        run: |
+          sudo systemctl stop --no-block bench || true
+          echo "asked systemd to stop bench"
+
       - name: report
         if: always()
         env:
