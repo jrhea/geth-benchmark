@@ -19,6 +19,9 @@
 #   --base-label TEXT   what the report heading calls each side, when the ref
 #   --feature-label TEXT  itself reads badly, such as a bare commit hash
 #   --geth-args FLAGS   extra flags for the geth under test, both sides
+#   --go VERSION        build both sides with this Go, such as 1.27.0. Each side
+#   --base-go VERSION   otherwise uses the one its own build/checksums.txt pins,
+#   --feature-go VERSION  so a ref that bumps the toolchain is measured as such
 #   --blocks N          default 2000
 #   --runs N            default 3
 #   --warmup N          default the same as --blocks
@@ -31,7 +34,7 @@ REPO=/home/debian/geth-benchmark
 REMOTE=$REPO/scripts
 
 BASE= FEATURE= LABEL= BASE_LABEL= FEATURE_LABEL= GETH_ARGS=
-BLOCKS= RUNS= WARMUP= DRY=
+BLOCKS= RUNS= WARMUP= DRY= GO= BASE_GO= FEATURE_GO=
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -41,6 +44,9 @@ while [ $# -gt 0 ]; do
     --base-label)    BASE_LABEL=$2; shift 2 ;;
     --feature-label) FEATURE_LABEL=$2; shift 2 ;;
     --geth-args)     GETH_ARGS=$2; shift 2 ;;
+    --go)            GO=$2; shift 2 ;;
+    --base-go)       BASE_GO=$2; shift 2 ;;
+    --feature-go)    FEATURE_GO=$2; shift 2 ;;
     --blocks)        BLOCKS=$2; shift 2 ;;
     --runs)          RUNS=$2; shift 2 ;;
     --warmup)        WARMUP=$2; shift 2 ;;
@@ -94,7 +100,8 @@ add BASE "$BASE";                 add FEATURE "$FEATURE"
 add LABEL "$LABEL";               add BASE_LABEL "$BASE_LABEL"
 add FEATURE_LABEL "$FEATURE_LABEL"; add GETH_ARGS "$GETH_ARGS"
 add BLOCKS "$BLOCKS";             add RUNS "$RUNS"
-add WARMUP "$WARMUP"
+add WARMUP "$WARMUP";           add GO "$GO"
+add BASE_GO "$BASE_GO";         add FEATURE_GO "$FEATURE_GO"
 
 CMD=
 for e in "${VARS[@]}"; do CMD="$CMD$(printf '%q' "$e") "; done

@@ -25,7 +25,8 @@ if systemctl is-active --quiet bench; then
 fi
 
 SET=()
-for v in BASE BASE_LABEL FEATURE FEATURE_LABEL LABEL BLOCKS RUNS WARMUP GETH_ARGS; do
+for v in BASE BASE_LABEL FEATURE FEATURE_LABEL LABEL BLOCKS RUNS WARMUP GETH_ARGS \
+         GO BASE_GO FEATURE_GO; do
   [ -n "${!v:-}" ] && SET+=("--setenv=$v=${!v}")
 done
 

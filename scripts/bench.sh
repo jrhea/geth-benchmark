@@ -16,6 +16,12 @@
 #
 #   BASE=a1b2c3d4 BASE_LABEL="fork point" FEATURE=my-branch bash bench.sh
 #
+# Each side is built with the Go its own build/checksums.txt pins, so a ref that
+# bumps the toolchain is measured against one that does not. BASE_GO, FEATURE_GO
+# and GO override that with a version like 1.27.0:
+#
+#   GO=1.27.0 BASE=master FEATURE=mine bash bench.sh
+#
 # GETH_ARGS adds flags to the geth under test, on both sides:
 #
 #   GETH_ARGS="--cache.noprefetch" BASE=master FEATURE=mine bash bench.sh
@@ -79,6 +85,8 @@ write_meta() {
   "feature_ref": "$FEATURE",
   "feature_label": "$FEATURE_LABEL",
   "feature_sha": "$FEATURE_SHA",
+  "base_go": "$BASE_GO",
+  "feature_go": "$FEATURE_GO",
   "blocks": $BLOCKS,
   "runs": $RUNS,
   "warmup": $WARMUP,
@@ -136,6 +144,44 @@ BASE_SHA=$(git rev-parse "$BASE" 2>/dev/null || echo "")
 FEATURE_SHA=$(git rev-parse "$FEATURE" 2>/dev/null || echo "")
 STARTED=$(date -u '+%Y-%m-%d %H:%M')
 
+# The Go a ref is meant to be built with, from the checksums file that ships in
+# the ref itself. Two refs on the same toolchain get the same one, and a ref that
+# moves the toolchain gets its own, which is the only way to measure a Go bump at
+# all since the old code will not compile under the new one.
+go_for() {
+  local v
+  v=$(git show "$1:build/checksums.txt" 2>/dev/null | sed -n 's/^# version:golang //p' | head -1)
+  printf '%s' "${v:-}"
+}
+BASE_GO="${BASE_GO:-${GO:-$(go_for "$BASE_SHA")}}"
+FEATURE_GO="${FEATURE_GO:-${GO:-$(go_for "$FEATURE_SHA")}}"
+
+# Build each side here rather than letting the harness do it. It only checks
+# whether the binary it would build already exists, so putting one there picks
+# the toolchain per side, and a compile error lands in this log instead of the
+# harness's discarded debug output.
+build_side() {
+  local sha=$1 want=$2 name dest wt rc
+  name=geth_${sha:0:8}
+  dest=$OUT/bin/$name
+  [ -f "$dest" ] && { log "  ${sha:0:8} already built"; return 0; }
+  wt=$(mktemp -d /tmp/benchbuild.XXXXXX)
+  rm -rf "$wt"
+  git worktree add -q --detach "$wt" "$sha" || { log "ABORT: cannot check out $sha"; return 1; }
+  log "  building ${sha:0:8} with ${want:+go}${want:-the installed go}"
+  ( cd "$wt" && GOTOOLCHAIN="${want:+go$want}${want:-auto}" make geth ) >"$OUT/build_${sha:0:8}.log" 2>&1
+  rc=$?
+  if [ $rc -eq 0 ]; then
+    mkdir -p "$OUT/bin" && cp "$wt/build/bin/geth" "$dest"
+    rc=$?
+  else
+    log "ABORT: ${sha:0:8} did not build, see $OUT/build_${sha:0:8}.log"
+    tail -15 "$OUT/build_${sha:0:8}.log" | sed 's/^/    /'
+  fi
+  git worktree remove --force "$wt" 2>/dev/null
+  return $rc
+}
+
 # The harness gets its blocks from here and gives up if it cannot, so check
 # before spending several minutes pinning the head.
 curl -s --max-time 10 -X POST -H 'content-type: application/json' \
@@ -144,6 +190,12 @@ curl -s --max-time 10 -X POST -H 'content-type: application/json' \
     log "ABORT: no block cache on $CACHE. sudo systemctl start blockcache"
     exit 1
   }
+
+# Before anything is torn down, so a compile error costs nothing.
+mkdir -p "$OUT/bin"
+log "building both sides"
+build_side "$BASE_SHA" "$BASE_GO" || exit 1
+build_side "$FEATURE_SHA" "$FEATURE_GO" || exit 1
 
 log "clearing the field"
 for u in blsync-bench geth-bench; do sudo systemctl stop --no-block "$u.service" 2>/dev/null || true; done

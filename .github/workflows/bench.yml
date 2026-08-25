@@ -44,6 +44,10 @@ on:
         type: choice
         options: ["3", "1", "2", "5"]
         default: "3"
+      go:
+        description: "Go version for both sides, empty to use each ref's own version"
+        required: false
+        default: ""
       geth_args:
         description: "extra geth flags, applied to both sides"
         required: false
@@ -128,6 +132,7 @@ jobs:
           BLOCKS: ${{ inputs.blocks }}
           RUNS: ${{ inputs.runs }}
           GETH_ARGS: ${{ inputs.geth_args }}
+          GO: ${{ inputs.go }}
           WAIT: 1
         run: bash /home/debian/geth-benchmark/scripts/start-bench.sh
 

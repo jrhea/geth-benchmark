@@ -594,8 +594,15 @@ def main():
     if bm.get("geth_args"):
         out.append(f"both sides with `{bm['geth_args']}`")
     out.append("")
-    out.append(ref_line("base", base_info, go_version))
-    out.append(ref_line("target", targ_info, go_version) + "\n")
+    # Each side records the Go it was built with, and the two only match when the
+    # refs pin the same one. Older runs did not record it, so fall back to the
+    # toolchain installed here.
+    def go_for(key):
+        v = bm.get(key)
+        return f"go{v}" if v else go_version
+
+    out.append(ref_line("base", base_info, go_for("base_go")))
+    out.append(ref_line("target", targ_info, go_for("feature_go")) + "\n")
 
     # "2000 blocks x 3 runs" rather than "n=6000". The same blocks are measured
     # once per run, so repeats tighten each block's estimate, they do not add
