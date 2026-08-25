@@ -160,16 +160,31 @@ FEATURE_GO="${FEATURE_GO:-${GO:-$(go_for "$FEATURE_SHA")}}"
 # whether the binary it would build already exists, so putting one there picks
 # the toolchain per side, and a compile error lands in this log instead of the
 # harness's discarded debug output.
+go_of() { "$1" version 2>/dev/null | sed -n 's/^Go Version: *go//p' | head -1; }
+
 build_side() {
-  local sha=$1 want=$2 name dest wt rc
+  local sha=$1 want=$2 name dest wt rc have tc
   name=geth_${sha:0:8}
   dest=$OUT/bin/$name
-  [ -f "$dest" ] && { log "  ${sha:0:8} already built"; return 0; }
+  # Only reuse a binary built with the toolchain this side asked for. A label can
+  # be re-used, and the leftover from an earlier run may have been built with a
+  # different one, which would then be measured while the report claimed
+  # otherwise.
+  if [ -f "$dest" ]; then
+    have=$(go_of "$dest")
+    if [ -z "$want" ] || [ "$have" = "$want" ]; then
+      log "  ${sha:0:8} already built with go${have:-?}"
+      return 0
+    fi
+    log "  ${sha:0:8} was built with go$have, rebuilding for go$want"
+    rm -f "$dest"
+  fi
   wt=$(mktemp -d /tmp/benchbuild.XXXXXX)
   rm -rf "$wt"
   git worktree add -q --detach "$wt" "$sha" || { log "ABORT: cannot check out $sha"; return 1; }
-  log "  building ${sha:0:8} with ${want:+go}${want:-the installed go}"
-  ( cd "$wt" && GOTOOLCHAIN="${want:+go$want}${want:-auto}" make geth ) >"$OUT/build_${sha:0:8}.log" 2>&1
+  if [ -n "$want" ]; then tc=go$want; else tc=auto; fi
+  log "  building ${sha:0:8} with GOTOOLCHAIN=$tc"
+  ( cd "$wt" && GOTOOLCHAIN="$tc" make geth ) >"$OUT/build_${sha:0:8}.log" 2>&1
   rc=$?
   if [ $rc -eq 0 ]; then
     mkdir -p "$OUT/bin" && cp "$wt/build/bin/geth" "$dest"
@@ -196,6 +211,10 @@ mkdir -p "$OUT/bin"
 log "building both sides"
 build_side "$BASE_SHA" "$BASE_GO" || exit 1
 build_side "$FEATURE_SHA" "$FEATURE_GO" || exit 1
+# Report what the binaries were actually built with, not what was asked for.
+BASE_GO=$(go_of "$OUT/bin/geth_${BASE_SHA:0:8}")
+FEATURE_GO=$(go_of "$OUT/bin/geth_${FEATURE_SHA:0:8}")
+log "  base go$BASE_GO, feature go$FEATURE_GO"
 
 log "clearing the field"
 for u in blsync-bench geth-bench; do sudo systemctl stop --no-block "$u.service" 2>/dev/null || true; done
