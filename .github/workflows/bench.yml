@@ -155,9 +155,13 @@ jobs:
           # journal fallback on exactly the runs that need it.
           D=$(ls -1dt /home/debian/benchmarks/"$LABEL"/results/*/ 2>/dev/null | head -1 || true)
           D=${D%/}
-          if [ -n "$D" ] && [ -f "$D/report.md" ]; then
+          # Keep the raw data even when the report failed, since that is what you
+          # would debug it with.
+          if [ -n "$D" ]; then echo "RESULTS=$D" >> "$GITHUB_ENV"; fi
+          # A failed report.py still leaves an empty report.md behind, so test
+          # for content rather than for the file.
+          if [ -n "$D" ] && [ -s "$D/report.md" ]; then
             cat "$D/report.md" >> "$GITHUB_STEP_SUMMARY"
-            echo "RESULTS=$D" >> "$GITHUB_ENV"
           else
             echo "no report was written, see the journal:" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"

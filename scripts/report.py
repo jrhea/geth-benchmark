@@ -40,6 +40,7 @@ dominate it, since a fraction of a millisecond is a large percentage.
 """
 import argparse
 import csv
+import math
 import json
 import os
 import re
@@ -285,6 +286,7 @@ def breakdown(pairs, runs):
             bv = [v for k, v in bs.items() if k in ts_]
             tv = [v for k, v in ts_.items() if k in bs]
             d = deltas(bs, ts_)
+            mb = st.fmean(bv)
             r = {
                 # median of the per-block changes, which is not the change in
                 # the median. This one pairs each block with itself.
@@ -293,7 +295,7 @@ def breakdown(pairs, runs):
                 "n": len(d),
                 # this is the delta that adds up. Block total plus engine
                 # overhead equals newPayload exactly.
-                "d_mean": (st.fmean(tv) - st.fmean(bv)) / st.fmean(bv) * 100.0,
+                "d_mean": (st.fmean(tv) - mb) / mb * 100.0 if mb else float("nan"),
             }
             for agg, f in MS_COLS:
                 b, t = f(bv), f(tv)
@@ -379,6 +381,8 @@ def places(hr, dec):
 
 def fmt_val(value, hr, dec=None, unit=""):
     """'81.9 ±0.2 ms', '72% ±1%'. The ± is in the column's own units."""
+    if math.isnan(value):
+        return "n/a"
     if dec is None:
         dec = 2 if abs(value) < 10 else 1
     dec = places(hr, dec)
@@ -392,6 +396,9 @@ def fmt_val(value, hr, dec=None, unit=""):
 
 def fmt_delta(d, hr):
     """'-1.5% ±0.1%'. Both in points, since the column is already a percentage."""
+    # a bucket that is zero on the base side has no percentage to show
+    if math.isnan(d):
+        return "n/a"
     dec = places(hr, 1)
     v = f"{d:+.{dec}f}%"
     return v if hr is None else f"{v} ±{hr:.{dec}f}%"
