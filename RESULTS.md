@@ -11,6 +11,16 @@ and commits, paired per-block headline, `Results`, per-run, execution breakdown.
 It reports numbers and marks each one `▲`/`▼`/`≈`. It says nothing about *why* a
 change behaves the way it does. Add that by hand when you post it.
 
+The harness sends a forkchoiceUpdated after every newPayload and times the two
+separately. The `FCU` rows in `Results` are that second call, and every other
+latency in the report is newPayload alone. Throughput is the exception, since it
+divides gas by the time of both.
+
+In the breakdown, `other` is what geth's timers leave out of `block total`, such as
+setup before execution and the part of validation that is not trie hashing. The
+buckets down to it add up to `block total`, and `engine overhead` is newPayload
+minus `block total`, so it covers everything outside geth's block timer.
+
 Two things it needs that are easy to forget:
 
 - **`--runs 3`.** Without several passes per side there is no ±, and the report

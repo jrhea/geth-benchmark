@@ -80,6 +80,7 @@ def read_side(path):
 
 def summarize(rows):
     np_ms = [r["np"] for r in rows]
+    fcu_ms = [r["fcu"] for r in rows]
     total_gas = sum(r["gas"] for r in rows)
     total_ms = sum(r["total"] for r in rows)
     return {
@@ -92,6 +93,10 @@ def summarize(rows):
         "p99": pct(np_ms, 99),
         "min": min(np_ms),
         "max": max(np_ms),
+        "fcu_mean": st.fmean(fcu_ms),
+        "fcu_p50": pct(fcu_ms, 50),
+        "fcu_p95": pct(fcu_ms, 95),
+        "fcu_p99": pct(fcu_ms, 99),
     }
 
 
@@ -172,6 +177,10 @@ BUCKETS = [
     ("state read", lambda d: d["timing"]["state_read_ms"]),
     ("state hash", lambda d: d["timing"]["state_hash_ms"]),
     ("commit", lambda d: d["timing"]["commit_ms"]),
+    # what geth's timers leave out of block total, such as setup before execution
+    # and the part of validation that is not trie hashing
+    ("other", lambda d: d["timing"]["total_ms"] - sum(
+        d["timing"][k] for k in ("execution_ms", "state_read_ms", "state_hash_ms", "commit_ms"))),
     ("block total", lambda d: d["timing"]["total_ms"]),
 ]
 RATES = [
@@ -625,6 +634,10 @@ def main():
         ("p50 newPayload", "p50", "ms", True),
         ("p95 newPayload", "p95", "ms", True),
         ("p99 newPayload", "p99", "ms", True),
+        ("mean FCU", "fcu_mean", "ms", True),
+        ("p50 FCU", "fcu_p50", "ms", True),
+        ("p95 FCU", "fcu_p95", "ms", True),
+        ("p99 FCU", "fcu_p99", "ms", True),
     ]
     for name, key, unit, lower_better in rows:
         bv, bs = agg(1, key)
