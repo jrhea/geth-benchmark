@@ -18,9 +18,12 @@ meta() { python3 -c "import json,sys;print(json.load(open('bench-meta.json')).ge
 BASE_REF=$(meta base_ref); BASE_SHA=$(meta base_sha); BASE_LABEL=$(meta base_label)
 FEAT_REF=$(meta feature_ref); FEAT_SHA=$(meta feature_sha); FEAT_LABEL=$(meta feature_label)
 BLOCKS=$(meta blocks)
+# where it ran, which is not necessarily where this renders it
+MACHINE=$(meta machine); MACHINE=${MACHINE:-$(hostname)}
 
-# The per-pass files, skipping any a pass left empty.
-passes() { find . -path "./run*/$1/cpu.pprof" -size +0 | sort; }
+# The per-pass files, skipping any a pass left empty. Several runs go in
+# runN/<side>/, and a single run straight into <side>/.
+passes() { find . \( -path "./run*/$1/cpu.pprof" -o -path "./$1/cpu.pprof" \) -size +0 | sort; }
 merge() {  # into, from...
   local into=$1; shift
   [ $# -gt 0 ] || return 1
@@ -40,7 +43,7 @@ if [ "$BASE_SHA" = "$FEAT_SHA" ]; then
   merge profile.pprof $B $F || { echo "no usable profiles were written"; exit 1; }
   echo "### Profile: \`${FEAT_LABEL:-$FEAT_REF}\`"
   echo
-  echo "**${BLOCKS}** blocks per pass · $(( nb + nf )) passes · machine \`$(hostname)\` · \`${FEAT_SHA:0:10}\`"
+  echo "**${BLOCKS}** blocks per pass · $(( nb + nf )) passes · machine \`$MACHINE\` · \`${FEAT_SHA:0:10}\`"
   echo
   echo "CPU profiles cover the block replay only, not node startup or the rewind after each pass. A profiled run's timings are not a measurement."
   echo
@@ -56,7 +59,7 @@ merge base.pprof $B && hb=1 || hb=
 merge feature.pprof $F && hf=1 || hf=
 echo "### Profile: \`${BASE_LABEL:-$BASE_REF}\` → \`${FEAT_LABEL:-$FEAT_REF}\`"
 echo
-echo "**${BLOCKS}** blocks per pass · ${nb} base and ${nf} target passes · machine \`$(hostname)\`"
+echo "**${BLOCKS}** blocks per pass · ${nb} base and ${nf} target passes · machine \`$MACHINE\`"
 echo
 echo "- **base** \`${BASE_REF}\` @ \`${BASE_SHA:0:10}\`"
 echo "- **target** \`${FEAT_REF}\` @ \`${FEAT_SHA:0:10}\`"

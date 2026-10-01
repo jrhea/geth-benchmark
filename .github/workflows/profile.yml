@@ -137,6 +137,6 @@ jobs:
             ${{ env.RESULTS }}/profile.md
             ${{ env.RESULTS }}/bench-meta.json
             ${{ env.RESULTS }}/*.pprof
-            ${{ env.RESULTS }}/run*/*/cpu.pprof
+            ${{ env.RESULTS }}/**/cpu.pprof
             ${{ env.RESULTS }}/slowblock.log
           if-no-files-found: warn

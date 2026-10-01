@@ -31,10 +31,11 @@ cur= curdir=
 while IFS= read -r line; do
   case "$line" in
     *"Running benchmark from block"*"(output: "*)
-      # the harness names the pass directory, run2/feature and so on
+      # the harness names the pass directory, results/<ts>/baseline for one run
+      # and results/<ts>/run2/feature for several
       dir=$(printf '%s' "$line" | sed -n 's/.*(output: "\(.*\)").*/\1/p')
       [ -n "$dir" ] || continue
-      pass=$(basename "$(dirname "$dir")")/$(basename "$dir")
+      pass=${dir#*/results/*/}
       # it does not exist until the pass writes its results
       mkdir -p "$dir"
       if out=$(try debug_startCPUProfile "\"$dir/cpu.pprof\""); then
