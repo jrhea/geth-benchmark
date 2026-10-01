@@ -12,14 +12,13 @@ set -uo pipefail
 HOST="${BENCH_HOST:-debian@geth-benchmark-1}"
 
 tsh ssh "$HOST" "bash -s ${1:-}" <<'REMOTE'
-B=/home/debian/benchmarks
+B=/home/debian/benchmarks/bench
 LABEL="${1:-}"
 
 if [ -z "$LABEL" ]; then
   printf "  %-30s %-18s %s\n" LABEL "LATEST RUN" REPORT
   for d in "$B"/*/; do
     n=$(basename "$d")
-    [ "$n" = archive ] && continue
     t=$(ls -1dt "$d"results/*/ 2>/dev/null | head -1)
     if [ -z "$t" ]; then
       printf "  %-30s %-18s %s\n" "$n" "-" "no runs"

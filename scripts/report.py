@@ -4,7 +4,7 @@ Format a reth-bench-compare results directory as a markdown benchmark report.
 
 bench.sh writes one at the end of every run. To regenerate it:
 
-  ./report.py --results /home/debian/benchmarks/my-branch
+  ./report.py --results /home/debian/benchmarks/bench/my-branch
 
 Everything comes from the per-block CSVs the harness writes. The harness reports
 means only, so percentiles and the paired per-block stats are computed here.
@@ -546,7 +546,11 @@ def main():
             break
 
     machine = args.machine or bm.get("machine") or "geth-benchmark-1"
-    slowblock = args.slowblock_log or bm.get("slowblock_log")
+    # The log beside the results first, which is where bench.sh leaves it. The
+    # absolute path in bench-meta.json goes stale if the run's directory moves.
+    beside = os.path.join(R, "slowblock.log")
+    slowblock = (args.slowblock_log or (beside if os.path.exists(beside) else None)
+                 or bm.get("slowblock_log"))
 
     runs = discover_runs(R)
     n_runs = len(runs)

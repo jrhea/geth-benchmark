@@ -4,20 +4,24 @@
 #
 #   bash progress.sh [label] [blocks] [runs]
 #
-# With no label it reports whatever is running. blocks and runs default to 2000
-# and 3, matching bench.sh, and only need passing if the run used something else.
+# With no label it reports whatever is running. For the run that is going it uses
+# that run's own blocks and runs, so they only need passing for an earlier one,
+# where they default to 2000 and 3 like bench.sh. Profile runs are found too.
 set -uo pipefail
 HOST="${BENCH_HOST:-debian@geth-benchmark-1}"
 
-tsh ssh "$HOST" "bash -s $(printf %q "${1:-}") ${2:-2000} ${3:-3}" <<'REMOTE'
+tsh ssh "$HOST" "bash -s $(printf %q "${1:-}") $(printf %q "${2:-}") $(printf %q "${3:-}")" <<'REMOTE'
 set -uo pipefail
 LABEL=$1
 BLOCKS=$2
 RUNS=$3
+B=/home/debian/benchmarks
 
 # There is one bench unit, so check whose it is before reporting it as running.
 STATE=$(systemctl is-active bench 2>/dev/null | head -1)
-NOW=$(systemctl show bench -p Environment --value 2>/dev/null | tr ' ' '\n' | sed -n 's/^LABEL=//p')
+UNIT=$(systemctl show bench -p Environment --value 2>/dev/null | tr ' ' '\n')
+unit() { printf '%s\n' "$UNIT" | sed -n "s/^$1=//p"; }
+NOW=$(unit LABEL)
 
 if [ -z "$LABEL" ]; then
   [ -n "$NOW" ] || { echo "nothing running, pass a label"; exit 0; }
@@ -25,11 +29,25 @@ if [ -z "$LABEL" ]; then
   echo "$LABEL"
 fi
 
-RUN=/home/debian/benchmarks/$LABEL
-PASSES=$(( 2 * RUNS + 1 ))
-TOTAL=$(( PASSES * BLOCKS ))
 MINE=false
 [ "$STATE" = active ] && [ "$NOW" = "$LABEL" ] && MINE=true
+# a profile runs once, and a smoke test replays fewer blocks
+if $MINE; then
+  BLOCKS=${BLOCKS:-$(unit BLOCKS)}
+  RUNS=${RUNS:-$(unit RUNS)}
+fi
+BLOCKS=${BLOCKS:-2000}
+RUNS=${RUNS:-3}
+
+# Profile runs keep to a directory of their own, and write profile.md, not a report.
+RUN=$B/bench/$LABEL DONEFILE=report.md
+if $MINE; then
+  [ -n "$(unit PROFILE)" ] && RUN=$B/profile/$LABEL DONEFILE=profile.md
+elif [ ! -d "$RUN" ] && [ -d "$B/profile/$LABEL" ]; then
+  RUN=$B/profile/$LABEL DONEFILE=profile.md
+fi
+PASSES=$(( 2 * RUNS + 1 ))
+TOTAL=$(( PASSES * BLOCKS ))
 
 # bench.sh builds geth and pins the head before it creates the directory, so a
 # run can be several minutes in with nothing on disk yet.
@@ -70,7 +88,7 @@ if $MINE; then
   if [ "$DONE" -ge "$TOTAL" ]; then
     # this run's directory, not a report left behind by an earlier one
     D=$(ls -1dt "$RUN"/results/*/ 2>/dev/null | head -1)
-    [ -f "${D%/}/report.md" ] && WHERE="report ready, still rewinding" || WHERE="rewinding"
+    [ -f "${D%/}/$DONEFILE" ] && WHERE="${DONEFILE%.md} ready, still rewinding" || WHERE="rewinding"
   fi
 else
   STATE=inactive

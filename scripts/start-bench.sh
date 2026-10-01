@@ -26,7 +26,7 @@ fi
 
 SET=()
 for v in BASE BASE_LABEL FEATURE FEATURE_LABEL LABEL BLOCKS RUNS WARMUP GETH_ARGS \
-         GO BASE_GO FEATURE_GO; do
+         GO BASE_GO FEATURE_GO PROFILE; do
   [ -n "${!v:-}" ] && SET+=("--setenv=$v=${!v}")
 done
 

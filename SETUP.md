@@ -25,7 +25,8 @@ bash ~/geth-benchmark/scripts/setup-debian.sh
 It goes to `/home/debian/geth-benchmark` so a path in these documents is the same
 path on the box. `scripts/blockcache/` in particular has to stay where
 `blockcache.service` expects it. Everything a run produces goes under
-`/home/debian/benchmarks/<LABEL>/`, and nothing else belongs in the home directory.
+`/home/debian/benchmarks/`, in `bench/<LABEL>/` for a benchmark and `profile/<LABEL>/`
+for a profile, and nothing else belongs in the home directory.
 
 The script installs `build-essential pkg-config libssl-dev libclang-dev clang
 cmake jq unzip`, Go 1.26.5 from the official tarball to `/usr/local/go`, and Rust

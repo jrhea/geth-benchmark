@@ -26,7 +26,11 @@
 #
 #   GETH_ARGS="--cache.noprefetch" BASE=master FEATURE=mine bash bench.sh
 #
-# Writes to /home/debian/benchmarks/<LABEL>/results/<timestamp>/, report included.
+# Writes to /home/debian/benchmarks/bench/<LABEL>/results/<timestamp>/, report
+# included.
+#
+# PROFILE=1 takes a CPU profile of every measured pass instead of a report, and
+# writes to /home/debian/benchmarks/profile/<LABEL>/ instead. Setting both refs to the same one profiles just it.
 #
 # Setup uses pkill rather than systemctl stop, which is unreliable from inside a
 # systemd unit. Every wait here logs progress and gives up loudly.
@@ -53,6 +57,7 @@ RUNS="${RUNS:-3}"
 GETH_ARGS="${GETH_ARGS:-}"
 BASE_LABEL="${BASE_LABEL:-$BASE}"
 FEATURE_LABEL="${FEATURE_LABEL:-$FEATURE}"
+PROFILE="${PROFILE:-}"
 RUNS_DIR=/home/debian/benchmarks
 
 # The pinned head and window size come from whatever new-window.sh last set up.
@@ -73,7 +78,9 @@ BLOCKS="${BLOCKS_IN:-${BLOCKS:?$WINDOW sets no BLOCKS}}"
 WARMUP="${WARMUP_IN:-$BLOCKS}"
 LOCAL=http://127.0.0.1:8545
 CACHE=http://127.0.0.1:8600
-OUT=$RUNS_DIR/${LABEL}
+# Benchmarks and profiles keep to a directory each, so a label used for both
+# never mixes the two, and no label can collide with window.env or archive.
+if [ -n "$PROFILE" ]; then OUT=$RUNS_DIR/profile/${LABEL}; else OUT=$RUNS_DIR/bench/${LABEL}; fi
 SB=$OUT/slowblock.log
 
 write_meta() {
@@ -94,6 +101,7 @@ write_meta() {
   "machine": "$(hostname)",
   "slowblock_log": "$SB",
   "geth_args": "$GETH_ARGS",
+  "profile": $([ -n "$PROFILE" ] && echo true || echo false),
   "started": "$STARTED"
 }
 EOF
@@ -274,29 +282,43 @@ write_meta "$OUT/bench-meta.json"
 # counting the whole tree would meet the target at once, then regenerate the
 # previous run's report instead of waiting for this one.
 HAVE=$(find "$OUT/results" -name combined_latency.csv 2>/dev/null | wc -l)
-(
-  want=$(( HAVE + 2 * RUNS ))
-  for _ in $(seq 1 720); do
-    [ "$(find "$OUT/results" -name combined_latency.csv 2>/dev/null | wc -l)" -ge "$want" ] && break
-    sleep 10
-  done
-  RES=$(ls -1dt "$OUT"/results/*/ 2>/dev/null | head -1); RES=${RES%/}
-  [ -n "$RES" ] || exit 0
-  python3 "$HERE/report.py" --results "$RES" > "$RES/report.md" 2>/dev/null &&
-    log "early report ready: $RES/report.md"
-) &
-EARLY=$!
+EARLY=
+if [ -z "$PROFILE" ]; then
+  (
+    want=$(( HAVE + 2 * RUNS ))
+    for _ in $(seq 1 720); do
+      [ "$(find "$OUT/results" -name combined_latency.csv 2>/dev/null | wc -l)" -ge "$want" ] && break
+      sleep 10
+    done
+    RES=$(ls -1dt "$OUT"/results/*/ 2>/dev/null | head -1); RES=${RES%/}
+    [ -n "$RES" ] || exit 0
+    python3 "$HERE/report.py" --results "$RES" > "$RES/report.md" 2>/dev/null &&
+      log "early report ready: $RES/report.md"
+  ) &
+  EARLY=$!
+fi
 
 log "running the harness (it will build $FEATURE first, a few minutes)"
-reth-bench-compare --client geth \
-  --baseline-ref "$BASE" --feature-ref "$FEATURE" \
-  --blocks "$BLOCKS" --runs "$RUNS" --warmup-blocks "$WARMUP" \
-  --datadir /datadrive/geth \
-  --rpc-url $CACHE \
-  --output-dir "$OUT" \
-  -- --debug.logslowblock 0 --log.file "$SB" $GETH_ARGS
-RC=$?
-kill "$EARLY" 2>/dev/null; wait "$EARLY" 2>/dev/null
+HARNESS=(reth-bench-compare --client geth
+  --baseline-ref "$BASE" --feature-ref "$FEATURE"
+  --blocks "$BLOCKS" --runs "$RUNS" --warmup-blocks "$WARMUP"
+  --datadir /datadrive/geth
+  --rpc-url "$CACHE"
+  --output-dir "$OUT"
+  -- --debug.logslowblock 0 --log.file "$SB")
+# a list of flags, so it is split on purpose
+# shellcheck disable=SC2206
+HARNESS+=($GETH_ARGS)
+if [ -n "$PROFILE" ]; then
+  # The watcher gets a copy of the harness's output and profiles each measured
+  # pass. tee still passes all of it through to the journal.
+  "${HARNESS[@]}" 2>&1 | tee >(RPC=$LOCAL bash "$HERE/profile-watch.sh")
+  RC=${PIPESTATUS[0]}
+else
+  "${HARNESS[@]}"
+  RC=$?
+fi
+if [ -n "$EARLY" ]; then kill "$EARLY" 2>/dev/null; wait "$EARLY" 2>/dev/null; fi
 log "harness exit=$RC"
 RES=$(ls -1dt "$OUT"/results/*/ 2>/dev/null | head -1)
 RES="${RES%/}"
@@ -310,6 +332,16 @@ log "slow-block lines: $(grep -c execution_ms "$SB" 2>/dev/null || echo 0)"
 mv -f "$SB" "$RES/slowblock.log" 2>/dev/null && SB="$RES/slowblock.log"
 mv -f "$OUT/reth-bench.log" "$RES/reth-bench.log" 2>/dev/null || true
 write_meta "$RES/bench-meta.json"
+
+if [ -n "$PROFILE" ]; then
+  log "writing the profile summary"
+  if bash "$HERE/profile-summary.sh" "$RES" > "$RES/profile.md"; then
+    log "profile: $RES/profile.md"
+  else
+    log "PROFILE SUMMARY FAILED, the profiles are still in $RES"
+  fi
+  exit "$RC"
+fi
 
 log "writing the report"
 if python3 "$HERE/report.py" --results "$RES" > "$RES/report.md"; then

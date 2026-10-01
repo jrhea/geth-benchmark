@@ -1,16 +1,20 @@
-name: bench
+name: profile
 
 # Titles the run in the list. It is evaluated before the job starts, so it cannot
 # use the label the run derives, only what was typed.
-run-name: ${{ inputs.label || format('{0}:{1} vs {2}', inputs.feature_fork, inputs.feature, inputs.base) }}
+run-name: ${{ inputs.label || format('profile {0}:{1}{2}', inputs.feature_fork, inputs.feature, inputs.mode == 'compare' && format(' vs {0}', inputs.base) || '') }}
 
-# Dispatch only. No pull_request or issue_comment trigger: a benchmark builds and
-# runs whatever ref it is given, on a box where debian has passwordless root, so
-# the ability to start one is the ability to run code there. Dispatch requires
-# write access to this repo, which is the gate.
+# CPU profiles of the block replay, one per measured pass, instead of a report.
+# Same box and harness as bench, and dispatch only for the same reason: starting
+# one is running whatever ref it is given, as a user with passwordless root.
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: "compare two refs, or profile the feature on its own"
+        type: choice
+        options: ["compare", "single"]
+        default: compare
       feature_fork:
         description: "feature fork"
         type: choice
@@ -18,16 +22,16 @@ on:
                   "lightclient", "MariusVanDerWijden", "rjl493456442"]
         default: ethereum
       feature:
-        description: "feature branch, tag, or commit to measure"
+        description: "feature branch, tag, or commit to profile"
         required: true
       base_fork:
-        description: "base fork"
+        description: "base fork. Ignored for single"
         type: choice
         options: ["ethereum", "cskiraly", "fjl", "healthykim", "jrhea",
                   "lightclient", "MariusVanDerWijden", "rjl493456442"]
         default: ethereum
       base:
-        description: "base branch, tag, or commit to measure"
+        description: "base branch, tag, or commit, or 'fork-point'. Ignored for single"
         required: true
         default: fork-point
       label:
@@ -35,17 +39,12 @@ on:
         required: false
         default: ""
       blocks:
-        description: "blocks per pass."
+        description: "blocks per pass"
         type: choice
         options: ["2000", "20", "500", "1000"]
         default: "2000"
-      runs:
-        description: "runs per side"
-        type: choice
-        options: ["3", "1", "2", "5"]
-        default: "3"
       go:
-        description: "Go version for both sides, empty to use each ref's own version"
+        description: "Go version for both sides, empty to use each ref's own"
         required: false
         default: ""
       geth_args:
@@ -54,17 +53,13 @@ on:
         default: ""
 
 jobs:
-  # There is one datadir and one port pair, so runs have to be serialized. The
-  # runner does that by taking one job at a time, and WAIT below keeps the job
-  # occupied for the whole run, so dispatches queue behind each other. bench.sh
-  # also holds an flock, which covers a launch from a laptop that the runner
-  # knows nothing about.
-  #
-  # Deliberately no concurrency group. A group keeps only one run waiting and
-  # cancels the earlier one when another arrives, which loses queued requests.
-  bench:
+  # Shares the runner with bench, which takes one job at a time, so a profile
+  # queues behind a benchmark and the other way round. bench.sh's flock and
+  # start-bench.sh's check for a running unit cover anything else. Results go to
+  # benchmarks/profile/, never a benchmark's own directory.
+  profile:
     runs-on: [self-hosted, bench-box]
-    timeout-minutes: 180
+    timeout-minutes: 120
     steps:
       # The deployed clone is the one the systemd units point at, so update it
       # rather than using a second checkout in the runner's workspace.
@@ -78,9 +73,10 @@ jobs:
           git submodule update --init -q
           echo "at $(git rev-parse --short HEAD)"
 
-      - name: resolve the base and the label
+      - name: resolve the refs and the label
         id: resolve
         env:
+          MODE: ${{ inputs.mode }}
           BASE: ${{ inputs.base }}
           BASE_FORK: ${{ inputs.base_fork }}
           FEATURE: ${{ inputs.feature }}
@@ -88,62 +84,59 @@ jobs:
           LABEL: ${{ inputs.label }}
         run: bash /home/debian/geth-benchmark/scripts/resolve.sh
 
-      # WAIT makes start-bench.sh block until the unit exits and return its
-      # status, so the job reflects the run rather than just the launch.
-      - name: run it
+      # One run is a warmup and then one pass per side. The warmup stays, since
+      # without it whichever side went first would be profiled against a cold
+      # cache, and the difference would show up as a code change.
+      - name: profile it
         env:
           BASE: ${{ steps.resolve.outputs.base }}
           BASE_LABEL: ${{ steps.resolve.outputs.base_label }}
           FEATURE: ${{ steps.resolve.outputs.feature }}
           LABEL: ${{ steps.resolve.outputs.label }}
           BLOCKS: ${{ inputs.blocks }}
-          RUNS: ${{ inputs.runs }}
+          RUNS: 1
           GETH_ARGS: ${{ inputs.geth_args }}
           GO: ${{ inputs.go }}
+          PROFILE: 1
           WAIT: 1
         run: bash /home/debian/geth-benchmark/scripts/start-bench.sh
 
       # Cancelling the job kills the step, not the unit it started. Without this
-      # the benchmark carries on and the next dispatch collides with it.
-      # --no-block returns straight away, so a long geth flush cannot outlast the
-      # grace period Actions gives a cancelled job.
-      - name: stop the benchmark if the job was cancelled
+      # the run carries on and the next dispatch collides with it.
+      - name: stop the run if the job was cancelled
         if: cancelled()
         run: |
           sudo systemctl stop --no-block bench || true
           echo "asked systemd to stop bench"
 
-      - name: report
+      - name: summary
         if: always()
         env:
           LABEL: ${{ steps.resolve.outputs.label }}
         run: |
           # -e is on, and an empty glob fails the pipeline, which would skip the
           # journal fallback on exactly the runs that need it.
-          D=$(ls -1dt /home/debian/benchmarks/bench/"$LABEL"/results/*/ 2>/dev/null | head -1 || true)
+          D=$(ls -1dt /home/debian/benchmarks/profile/"$LABEL"/results/*/ 2>/dev/null | head -1 || true)
           D=${D%/}
-          # Keep the raw data even when the report failed, since that is what you
-          # would debug it with.
           if [ -n "$D" ]; then echo "RESULTS=$D" >> "$GITHUB_ENV"; fi
-          # A failed report.py still leaves an empty report.md behind, so test
-          # for content rather than for the file.
-          if [ -n "$D" ] && [ -s "$D/report.md" ]; then
-            cat "$D/report.md" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$D" ] && [ -s "$D/profile.md" ]; then
+            cat "$D/profile.md" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "no report was written, see the journal:" >> "$GITHUB_STEP_SUMMARY"
+            echo "no profile summary was written, see the journal:" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             sudo journalctl -u bench -n 40 -o cat >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: upload the per-block data
+      - name: upload the profiles
         if: always() && env.RESULTS != ''
         uses: actions/upload-artifact@v7
         with:
-          name: bench-${{ steps.resolve.outputs.label }}-${{ github.run_id }}
+          name: profile-${{ steps.resolve.outputs.label }}-${{ github.run_id }}
           path: |
-            ${{ env.RESULTS }}/report.md
+            ${{ env.RESULTS }}/profile.md
             ${{ env.RESULTS }}/bench-meta.json
+            ${{ env.RESULTS }}/*.pprof
+            ${{ env.RESULTS }}/run*/*/cpu.pprof
             ${{ env.RESULTS }}/slowblock.log
-            ${{ env.RESULTS }}/**/combined_latency.csv
           if-no-files-found: warn

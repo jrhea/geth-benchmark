@@ -14,7 +14,7 @@
 #     bash run.sh --base fork-point --feature jrhea:my-branch
 #     bash run.sh --base fork-point --feature rjl493456442:optimize-commit
 #
-#   --label NAME        groups the run under /home/debian/benchmarks/NAME/.
+#   --label NAME        groups the run under /home/debian/benchmarks/bench/NAME/.
 #                       Defaults to the two refs, and is printed when it starts.
 #   --base-label TEXT   what the report heading calls each side, when the ref
 #   --feature-label TEXT  itself reads badly, such as a bare commit hash
@@ -27,6 +27,12 @@
 #   --warmup N          default the same as --blocks
 #   --dry-run           print the launch command instead of running it. It still
 #                       updates the box's clone and resolves the refs.
+#   --profile           take a CPU profile of each measured pass instead of a
+#                       report, over one run unless --runs says otherwise. Leave
+#                       out --base to profile --feature on its own:
+#
+#     bash run.sh --profile --feature jrhea:my-branch
+#     bash run.sh --profile --base fork-point --feature jrhea:my-branch
 set -uo pipefail
 HOST="${BENCH_HOST:-debian@geth-benchmark-1}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -34,7 +40,7 @@ REPO=/home/debian/geth-benchmark
 REMOTE=$REPO/scripts
 
 BASE= FEATURE= LABEL= BASE_LABEL= FEATURE_LABEL= GETH_ARGS=
-BLOCKS= RUNS= WARMUP= DRY= GO= BASE_GO= FEATURE_GO=
+BLOCKS= RUNS= WARMUP= DRY= GO= BASE_GO= FEATURE_GO= PROFILE= SINGLE=
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -51,14 +57,20 @@ while [ $# -gt 0 ]; do
     --runs)          RUNS=$2; shift 2 ;;
     --warmup)        WARMUP=$2; shift 2 ;;
     --dry-run)       DRY=1; shift ;;
+    --profile)       PROFILE=1; shift ;;
     -h|--help)       awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "$0"; exit 0 ;;
     *) echo "unknown option $1, try --help" >&2; exit 1 ;;
   esac
 done
 
+# A profile of one ref is that ref on both sides.
+if [ -n "$PROFILE" ] && [ -z "$BASE" ] && [ -n "$FEATURE" ]; then
+  BASE=$FEATURE SINGLE=1
+fi
 for v in BASE FEATURE; do
   [ -n "${!v}" ] || { echo "--$(echo $v | tr A-Z a-z) is required, try --help" >&2; exit 1; }
 done
+[ -n "$PROFILE" ] && RUNS=${RUNS:-1}
 
 # The box runs whatever is in its clone, so update it before anything reads a
 # script from there, --dry-run included. A dispatch does the same, and local
@@ -71,6 +83,8 @@ tsh ssh "$HOST" "cd $REPO && git fetch -q origin && git reset -q --hard origin/m
 if [ -n "$LABEL" ]; then
   # it becomes a directory name, so clean a given one the same way
   LABEL=$(bash "$HERE/mklabel.sh" "$LABEL") || exit 1
+elif [ -n "$SINGLE" ]; then
+  LABEL=$(bash "$HERE/mklabel.sh" "$FEATURE") || exit 1
 else
   LABEL=$(bash "$HERE/mklabel.sh" "$FEATURE" "$BASE") || exit 1
 fi
@@ -102,6 +116,7 @@ add FEATURE_LABEL "$FEATURE_LABEL"; add GETH_ARGS "$GETH_ARGS"
 add BLOCKS "$BLOCKS";             add RUNS "$RUNS"
 add WARMUP "$WARMUP";           add GO "$GO"
 add BASE_GO "$BASE_GO";         add FEATURE_GO "$FEATURE_GO"
+add PROFILE "$PROFILE"
 
 CMD=
 for e in "${VARS[@]}"; do CMD="$CMD$(printf '%q' "$e") "; done
@@ -110,6 +125,17 @@ CMD="${CMD}bash $REMOTE/start-bench.sh"
 if [ -n "$DRY" ]; then printf '%s\n' "$CMD"; exit 0; fi
 
 tsh ssh "$HOST" "$CMD" || exit 1
+if [ -n "$PROFILE" ]; then
+  cat <<EOF
+
+started. one run takes about 20 minutes.
+
+  progress:  bash scripts/progress.sh $LABEL
+  profiles:  /home/debian/benchmarks/profile/$LABEL/results/<timestamp>/, profile.md
+             beside them
+EOF
+  exit 0
+fi
 cat <<EOF
 
 started. it takes about 40 minutes.

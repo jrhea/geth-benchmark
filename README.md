@@ -73,7 +73,7 @@ root. Adding a line to it is the whole authorization, so it goes through a PR.
 
 ### Naming the run
 
-`--label` decides where results are kept, under `benchmarks/<label>/`. Leave it
+`--label` decides where results are kept, under `benchmarks/bench/<label>/`. Leave it
 out and the run is named after the two refs, which is what the example above did.
 Re-using a label is fine and keeps the earlier runs, since each one gets its own
 timestamped directory inside. Whatever you pass gets cleaned into something safe
@@ -144,7 +144,7 @@ bash scripts/progress.sh jrhea-trie-prefetch-batch-vs-fork-point
 For live per-block output, tagged with the pass it belongs to:
 
 ```bash
-tsh ssh debian@geth-benchmark-1 'tail -f /home/debian/benchmarks/jrhea-trie-prefetch-batch-vs-fork-point/reth-bench.log'
+tsh ssh debian@geth-benchmark-1 'tail -f /home/debian/benchmarks/bench/jrhea-trie-prefetch-batch-vs-fork-point/reth-bench.log'
 ```
 
 For what the runner itself is doing, including the builds:
@@ -167,7 +167,7 @@ about 200s, plus node start, rewind and flush, so **5-6 minutes per pass** and
 ## Viewing results
 
 Reports live with the run that produced them, at
-`benchmarks/<label>/results/<timestamp>/report.md`. What the numbers mean is
+`benchmarks/bench/<label>/results/<timestamp>/report.md`. What the numbers mean is
 [RESULTS.md](RESULTS.md).
 
 ```bash
@@ -201,7 +201,7 @@ bash scripts/latest-report.sh jrhea-trie-prefetch-batch-vs-fork-point > /tmp/rep
 An older run, once a label has several:
 
 ```bash
-tsh ssh debian@geth-benchmark-1 'cat /home/debian/benchmarks/jrhea-trie-prefetch-batch-vs-fork-point/results/20260807_174135/report.md'
+tsh ssh debian@geth-benchmark-1 'cat /home/debian/benchmarks/bench/jrhea-trie-prefetch-batch-vs-fork-point/results/20260807_174135/report.md'
 ```
 
 Runs started from the Actions tab also attach the report, the metadata and the
@@ -212,12 +212,53 @@ To regenerate a report, after changing `report.py` or to relabel the sides. Pass
 the run directory and it picks the newest results inside:
 
 ```bash
-tsh ssh debian@geth-benchmark-1 'python3 /home/debian/geth-benchmark/scripts/report.py --results /home/debian/benchmarks/jrhea-trie-prefetch-batch-vs-fork-point'
+tsh ssh debian@geth-benchmark-1 'python3 /home/debian/geth-benchmark/scripts/report.py --results /home/debian/benchmarks/bench/jrhea-trie-prefetch-batch-vs-fork-point'
 ```
 
 It needs nothing else, because each run leaves a `bench-meta.json` holding the
 refs and the commits that were built. `--base-label` and `--target-label` override
 the heading.
+
+## Profiling
+
+A profile run takes a CPU profile of each measured pass instead of writing a
+report. Each one covers the block replay only: the watcher starts it over RPC
+when the harness begins a pass and stops it when the pass ends, so node startup,
+the readiness wait and the rewind afterwards are all left out.
+
+From the Actions tab it's **Actions -> profile -> Run workflow**. `mode` picks
+between comparing two refs and profiling one on its own. From your laptop, leave
+out `--base` to profile one ref:
+
+```bash
+bash scripts/run.sh --profile --feature jrhea:trie-prefetch-batch
+bash scripts/run.sh --profile --base fork-point --feature jrhea:trie-prefetch-batch
+```
+
+A profile run is one run, so a warmup and then one pass per side, about 20
+minutes. The warmup stays unprofiled. Without it, whichever side went first
+would be profiled against a cold cache, and the difference would show up in the
+comparison as if the code had caused it.
+
+The run summary shows `profile.md`. Comparing two refs, it leads with where CPU
+time moved, target minus base with the largest change first, then the top of
+each side. A single ref shows where the time goes. The artifact carries the
+profiles themselves, per pass and merged per side, and the flame graph is a
+download away:
+
+```bash
+go tool pprof -http=:0 -diff_base base.pprof feature.pprof
+```
+
+There is no report because the numbers would mislead: profiling costs a few
+percent of CPU, and one run per side has no ± to judge anything by. Take timings
+from a benchmark, and use a profile to find out why.
+
+Profile runs share the box with benchmarks without getting in their way. The
+runner takes one job at a time from either workflow, so a profile waits behind a
+benchmark and the other way round. They write to `benchmarks/profile/<label>/`,
+beside `benchmarks/bench/` rather than inside it, so a label used for both keeps
+the two apart. `progress.sh` follows a profile run the same way as a benchmark.
 
 ## Changing the block window
 
