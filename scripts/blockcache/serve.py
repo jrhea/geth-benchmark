@@ -64,6 +64,9 @@ def load(cache_dir):
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    # headers and body go out as separate writes, so with Nagle on a small
+    # body waits ~40 ms for the client's delayed ACK of the headers
+    disable_nagle_algorithm = True
 
     def log_message(self, *a):
         pass  # stay quiet, this runs during benchmarks
