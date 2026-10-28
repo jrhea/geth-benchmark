@@ -17,15 +17,13 @@ separately. The `FCU` rows in `Results` are that second call, and every other
 latency in the report is newPayload alone. Throughput is the exception, since it
 divides gas by the time of both.
 
-The phase breakdown is wall time and nests the way its tree is drawn.
+The phase breakdown is wall time and nests the way it is indented.
 `block preparation` is the time geth spends turning the payload into a checked
 block before the block timer starts (the slow-block log's `prepare_ms`),
 `block total` is geth's block timer, and `engine overhead` is the rest of
 newPayload: reth-bench's client, HTTP, the JSON decode and the reply. Inside
 `block total`, `process`, `validate` and `commit` are geth's phases (since #35918)
-and `other` is what they leave out, mostly the setup before processing. `share` is
-a row's part of the base's mean newPayload. Means add up where percentiles do not,
-so the shares of a row's children add up to its own.
+and `other` is what they leave out, mostly the setup before processing.
 
 The geth timers are geth's own timers inside those phases. On the sequential path
 they are wall time and pieces of the phases. On geth's parallel (BAL) path they

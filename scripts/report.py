@@ -203,16 +203,17 @@ TIMERS = [
     ("state hash", lambda d: d["timing"]["state_hash_ms"]),
     ("trie commit", lambda d: d["timing"]["commit_ms"]),
 ]
-# The phase table's labels, which draw the nesting
+# The phase table's labels, indented to show the nesting. GitHub trims leading
+# spaces in a table cell, so the indent is &nbsp;.
+INDENT = "&nbsp;" * 4
 TREE = {
-    "newPayload": "**newPayload**",
-    "block preparation": "├ block preparation",
-    "block total": "├ **block total**",
-    "process": "│ ├ process¹",
-    "validate": "│ ├ validate",
-    "commit": "│ ├ commit",
-    "other": "│ └ other",
-    "engine overhead": "└ engine overhead",
+    "block preparation": "block preparation",
+    "block total": "**block total**",
+    "process": INDENT + "process¹",
+    "validate": INDENT + "validate",
+    "commit": INDENT + "commit",
+    "other": INDENT + "other",
+    "engine overhead": "engine overhead",
 }
 # The timers that mean something else on the parallel path, footnoted there
 PARALLEL_MARKS = {"execution": "²", "state read": "³", "state hash": "⁴"}
@@ -346,14 +347,14 @@ def bucket_series(pairs, runs):
 def phase_series(pairs, runs, split):
     """{row: [(base series, target series), ...]}, one entry per run, in table order.
 
-    newPayload comes from the harness CSVs and engine overhead is what it leaves
-    outside geth's block total. When both sides log the block preparation it gets
+    Engine overhead is newPayload latency from the harness CSVs minus geth's block
+    total. When both sides log the block preparation it gets
     its own row and comes out of the overhead, which leaves the client, HTTP, the
     JSON decode and the reply. Otherwise the overhead keeps it. Every row covers
     the blocks in both the log and the CSVs, so the means add up exactly.
     """
-    names = (["newPayload"] + (["block preparation"] if split else [])
-             + ["block total"] + [name for name, _ in PHASES] + ["engine overhead"])
+    names = ((["block preparation"] if split else []) + ["block total"]
+             + [name for name, _ in PHASES] + ["engine overhead"])
     out = {name: [] for name in names}
 
     def side(pass_, rows):
@@ -361,7 +362,7 @@ def phase_series(pairs, runs, split):
         pass_ = [d for d in pass_ if d["block"]["number"] in np_]
         prepare = lambda d: d["phases"]["prepare_ms"] if split else 0.0
         total = lambda d: d["timing"]["total_ms"]
-        s = {"newPayload": series(pass_, lambda d: np_[d["block"]["number"]])}
+        s = {}
         if split:
             s["block preparation"] = series(pass_, prepare)
         s["block total"] = series(pass_, total)
@@ -407,8 +408,6 @@ def breakdown(per_row):
                 # this is the delta that adds up. Block total, block preparation
                 # and engine overhead add up to newPayload exactly.
                 "d_mean": (st.fmean(tv) - mb) / mb * 100.0 if mb else float("nan"),
-                # the share column divides these
-                "b_mean": mb,
             }
             for agg, f in MS_COLS:
                 b, t = f(bv), f(tv)
@@ -526,17 +525,15 @@ def direction(delta_pct, lower_is_better=True):
     return "▲" if (delta_pct < 0 if lower_is_better else delta_pct > 0) else "▼"
 
 
-def table(out, head, rows, label=lambda name: name, share=None):
-    """One breakdown table. share, when given, is each row's share of newPayload
-    and gets its own column."""
+def table(out, head, rows, label=lambda name: name):
+    """One breakdown table."""
     heads = [f"base {a} | target {a}" for a, _ in MS_COLS]
     out.append(
-        f"| {head} | {'share | ' if share else ''}{' | '.join(heads)} | mean Δ | "
-        f"median Δ | blocks faster |"
+        f"| {head} | {' | '.join(heads)} | mean Δ | median Δ | blocks faster |"
     )
-    out.append("| :--- " + "| ---: " * (2 * len(MS_COLS) + 3 + (1 if share else 0)) + "|")
+    out.append("| :--- " + "| ---: " * (2 * len(MS_COLS) + 3) + "|")
     for r in rows:
-        cells = [f"{share(r):.1f}%"] if share else []
+        cells = []
         for agg, _ in MS_COLS:
             bv, tv = r["b_" + agg], r["t_" + agg]
             bh, th = r[f"b_{agg}_sp"], r[f"t_{agg}_sp"]
@@ -861,11 +858,10 @@ def main():
                   else f"n={n}")
             par = parallel_sides(pairs)
             out.append(f"#### newPayload phase breakdown, wall time (per block, {bl})\n")
-            np_mean = next(r["b_mean"] for r in rows if r["name"] == "newPayload")
-            table(out, "phase", rows, TREE.get, lambda r: r["b_mean"] / np_mean * 100.0)
+            table(out, "phase", rows, TREE.get)
             out.append(
-                "¹ running the block's transactions and system calls, including state "
-                "reads" + (" and the wait for the state root" if any(par) else "") + "\n"
+                "¹ includes EVM execution, state reads and the wait for the state root\n"
+                if any(par) else "¹ includes EVM execution and state reads\n"
             )
             if any(prep) and not all(prep):
                 has, lacks = ("target", "base") if prep[1] else ("base", "target")
