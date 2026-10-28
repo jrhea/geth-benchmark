@@ -251,24 +251,48 @@ def verify_orientation(pairs, runs):
     return bad
 
 
+def prepare_sides(pairs):
+    """Whether every base and every target block logged phases.prepare_ms.
+
+    geth writes it for newPayload since #35918. It is the time from newPayload
+    taking the payload to the start of the block timer.
+    """
+    def has(side):
+        return all("prepare_ms" in d.get("phases", {})
+                   for p in pairs for d in p[side])
+    return has(0), has(1)
+
+
 def bucket_series(pairs, runs):
     """{bucket: [(base series, target series), ...]}, one entry per run.
 
     Every bucket but engine overhead comes from geth's timers. Overhead is
     newPayload latency minus geth's block total, so it needs the harness CSVs too.
-    It is the engine API work outside geth's timers, roughly a fifth of newPayload.
+    When both sides log the block preparation it gets its own bucket and comes
+    out of the overhead, which leaves the client, HTTP, the JSON decode and the
+    reply. Otherwise the overhead keeps it.
     """
+    split = all(prepare_sides(pairs))
     out = {name: [] for name, _ in BUCKETS}
+    if split:
+        out["block preparation"] = []
     out["engine overhead"] = []
     total = dict(BUCKETS)["block total"]
+
+    def outside(d):
+        return total(d) + (d["phases"]["prepare_ms"] if split else 0)
+
     for (bp, tp), (_, brows, trows) in zip(pairs, runs):
         for name, get in BUCKETS:
             out[name].append((series(bp, get), series(tp, get)))
+        if split:
+            prepare = lambda d: d["phases"]["prepare_ms"]
+            out["block preparation"].append((series(bp, prepare), series(tp, prepare)))
         bnp = {r["block"]: r["np"] for r in brows}
         tnp = {r["block"]: r["np"] for r in trows}
         out["engine overhead"].append((
-            {k: bnp[k] - v for k, v in series(bp, total).items() if k in bnp},
-            {k: tnp[k] - v for k, v in series(tp, total).items() if k in tnp},
+            {k: bnp[k] - v for k, v in series(bp, outside).items() if k in bnp},
+            {k: tnp[k] - v for k, v in series(tp, outside).items() if k in tnp},
         ))
     return out
 
@@ -293,8 +317,8 @@ def breakdown(pairs, runs):
                 "paired": st.median(d) if d else float("nan"),
                 "faster": faster_pct(d),
                 "n": len(d),
-                # this is the delta that adds up. Block total plus engine
-                # overhead equals newPayload exactly.
+                # this is the delta that adds up. Block total, block preparation
+                # and engine overhead add up to newPayload exactly.
                 "d_mean": (st.fmean(tv) - mb) / mb * 100.0 if mb else float("nan"),
             }
             for agg, f in MS_COLS:
@@ -736,6 +760,14 @@ def main():
                     f"{fmt_val(r['faster'], r['faster_sp'], 0, '%')} {fm} |"
                 )
             out.append("")
+            sides = prepare_sides(pairs)
+            if any(sides) and not all(sides):
+                has, lacks = ("target", "base") if sides[1] else ("base", "target")
+                out.append(
+                    f"> Only the {has}'s geth logs the block preparation, the {lacks}'s "
+                    f"predates it (#35918), so engine overhead still includes it on "
+                    f"both sides.\n"
+                )
             out.append("| rate | base | target |")
             out.append("| :--- | ---: | ---: |")
             for name, b_, t_ in rates:

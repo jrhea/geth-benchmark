@@ -18,8 +18,12 @@ divides gas by the time of both.
 
 In the breakdown, `other` is what geth's timers leave out of `block total`, such as
 setup before execution and the part of validation that is not trie hashing. The
-buckets down to it add up to `block total`, and `engine overhead` is newPayload
-minus `block total`, so it covers everything outside geth's block timer.
+buckets down to it add up to `block total`. `block preparation` is the time geth
+spends turning the payload into a checked block before the block timer starts
+(the slow-block log's `prepare_ms`, since #35918), and `engine overhead` is the
+rest of newPayload: reth-bench's client, HTTP, the JSON decode and the reply. If
+either side's geth predates `prepare_ms`, the `block preparation` row is left out
+and `engine overhead` covers everything outside geth's block timer, as before.
 
 Two things it needs that are easy to forget:
 
