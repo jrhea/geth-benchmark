@@ -6,7 +6,8 @@ Running one: [README.md](README.md)
 ## The report
 
 One format for every benchmark, produced by `scripts/report.py`. Sections: refs
-and commits, paired per-block headline, `Results`, per-run, execution breakdown.
+and commits, paired per-block headline, `Results`, per-run, newPayload phase
+breakdown, geth timers.
 
 It reports numbers and marks each one `▲`/`▼`/`≈`. It says nothing about *why* a
 change behaves the way it does. Add that by hand when you post it.
@@ -16,20 +17,34 @@ separately. The `FCU` rows in `Results` are that second call, and every other
 latency in the report is newPayload alone. Throughput is the exception, since it
 divides gas by the time of both.
 
-In the breakdown, `other` is what geth's timers leave out of `block total`, such as
-setup before execution and the part of validation that is not trie hashing. The
-buckets down to it add up to `block total`. `block preparation` is the time geth
-spends turning the payload into a checked block before the block timer starts
-(the slow-block log's `prepare_ms`, since #35918), and `engine overhead` is the
-rest of newPayload: reth-bench's client, HTTP, the JSON decode and the reply. If
-either side's geth predates `prepare_ms`, the `block preparation` row is left out
-and `engine overhead` covers everything outside geth's block timer, as before.
+The phase breakdown is wall time and nests the way its tree is drawn.
+`block preparation` is the time geth spends turning the payload into a checked
+block before the block timer starts (the slow-block log's `prepare_ms`),
+`block total` is geth's block timer, and `engine overhead` is the rest of
+newPayload: reth-bench's client, HTTP, the JSON decode and the reply. Inside
+`block total`, `process`, `validate` and `commit` are geth's phases (since #35918)
+and `other` is what they leave out, mostly the setup before processing. `share` is
+a row's part of the base's mean newPayload. Means add up where percentiles do not,
+so the shares of a row's children add up to its own.
+
+The geth timers are geth's own timers inside those phases. On the sequential path
+they are wall time and pieces of the phases. On geth's parallel (BAL) path they
+overlap the phases and the table footnotes how, for example `state read` is summed
+across the tx states running at once and can exceed the block. Nothing in the log
+says which path a block took, so report.py tells from the numbers: only on the
+sequential path does `process` equal `execution` plus `state read` exactly.
+
+If either side's geth predates the phases, the report falls back to the older
+execution breakdown, where `other` is what geth's timers leave out of
+`block total` and the buckets down to it add up to it. If only `prepare_ms` is
+missing, the `block preparation` row is left out and `engine overhead` covers
+everything outside geth's block timer.
 
 Two things it needs that are easy to forget:
 
 - **`--runs 3`.** Without several passes per side there is no ±, and the report
   says so rather than inventing one.
-- **`-- --debug.logslowblock 0 --log.file <path>`** for the execution breakdown.
+- **`-- --debug.logslowblock 0 --log.file <path>`** for the breakdown.
   `0` logs every block, the default `-1` disables it.
 
 The breakdown depends on knowing which pass in the slow-block log was which side.
@@ -78,8 +93,8 @@ Two things worth knowing before you look:
 
 - **p99 is by far the weakest metric.** Its spread runs an order of magnitude
   looser than throughput. Be sceptical of tail claims.
-- **`state read` is the noisiest breakdown bucket.** Sub-2% movement there is not
-  a finding.
+- **`state read` is the noisiest geth timer.** Sub-2% movement there is not a
+  finding.
 
 A healthy run looks like ±0.2% throughput, ±0.4% p50, ±0.8% p95, ±3.4% p99, at
 ~345 MGas/s over the current window. Much looser than that, suspect the box rather

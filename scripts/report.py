@@ -13,9 +13,9 @@ bench.sh leaves a bench-meta.json in the results dir with the refs, the commits 
 built and the slow-block log path, and this reads it. Without that file, pass the
 refs and the log path by hand.
 
---slowblock-log adds the execution breakdown. It needs geth run with
---debug.logslowblock 0 (0 logs every block, the default -1 disables it) and
---log.file:
+--slowblock-log adds the newPayload phase breakdown and geth's timers. It needs
+geth run with --debug.logslowblock 0 (0 logs every block, the default -1 disables
+it) and --log.file:
 
   reth-bench-compare ... -- --debug.logslowblock 0 --log.file /tmp/slowblock.log
 
@@ -173,6 +173,8 @@ def read_slowblocks(path):
     return passes
 
 
+# The breakdown for geth before #35918, which logs no phases. Kept so older runs
+# still get one.
 BUCKETS = [
     ("execution", lambda d: d["timing"]["execution_ms"]),
     ("state read", lambda d: d["timing"]["state_read_ms"]),
@@ -184,6 +186,36 @@ BUCKETS = [
         d["timing"][k] for k in ("execution_ms", "state_read_ms", "state_hash_ms", "commit_ms"))),
     ("block total", lambda d: d["timing"]["total_ms"]),
 ]
+# geth's wall-clock phases since #35918. With other they add up to block total.
+PHASES = [
+    ("process", lambda d: d["phases"]["process_ms"]),
+    ("validate", lambda d: d["phases"]["validate_ms"]),
+    ("commit", lambda d: d["phases"]["commit_ms"]),
+    # what the phases leave out of block total, mostly the setup before processing
+    ("other", lambda d: d["timing"]["total_ms"] - sum(
+        d["phases"][k] for k in ("process_ms", "validate_ms", "commit_ms"))),
+]
+# geth's own timers. On the sequential path they are pieces of the phases, on the
+# parallel path they overlap them.
+TIMERS = [
+    ("execution", lambda d: d["timing"]["execution_ms"]),
+    ("state read", lambda d: d["timing"]["state_read_ms"]),
+    ("state hash", lambda d: d["timing"]["state_hash_ms"]),
+    ("trie commit", lambda d: d["timing"]["commit_ms"]),
+]
+# The phase table's labels, which draw the nesting
+TREE = {
+    "newPayload": "**newPayload**",
+    "block preparation": "├ block preparation",
+    "block total": "├ **block total**",
+    "process": "│ ├ process¹",
+    "validate": "│ ├ validate",
+    "commit": "│ ├ commit",
+    "other": "│ └ other",
+    "engine overhead": "└ engine overhead",
+}
+# The timers that mean something else on the parallel path, footnoted there
+PARALLEL_MARKS = {"execution": "²", "state read": "³", "state hash": "⁴"}
 RATES = [
     ("account cache hits", lambda d: d["cache"]["account"]["hit_rate"]),
     ("storage cache hits", lambda d: d["cache"]["storage"]["hit_rate"]),
@@ -263,48 +295,103 @@ def prepare_sides(pairs):
     return has(0), has(1)
 
 
+def phase_sides(pairs):
+    """Whether every base and every target block logged geth's phases (#35918)."""
+    def has(side):
+        return all("process_ms" in d.get("phases", {})
+                   for p in pairs for d in p[side])
+    return has(0), has(1)
+
+
+def parallel_sides(pairs):
+    """Whether each side's blocks mostly took geth's parallel (BAL) path.
+
+    The log does not say. On the sequential path geth sets execution to process
+    minus the state reads, so the two add up exactly. On the parallel path
+    execution is nearly all of process and the reads are summed across tx states.
+    """
+    def parallel(d):
+        t = d["timing"]
+        return abs(d["phases"]["process_ms"] - t["execution_ms"] - t["state_read_ms"]) > 0.001
+
+    def side(i):
+        blocks = [d for p in pairs for d in p[i]]
+        return sum(map(parallel, blocks)) * 2 > len(blocks)
+    return side(0), side(1)
+
+
 def bucket_series(pairs, runs):
     """{bucket: [(base series, target series), ...]}, one entry per run.
 
-    Every bucket but engine overhead comes from geth's timers. Overhead is
-    newPayload latency minus geth's block total, so it needs the harness CSVs too.
-    When both sides log the block preparation it gets its own bucket and comes
-    out of the overhead, which leaves the client, HTTP, the JSON decode and the
-    reply. Otherwise the overhead keeps it.
+    The older breakdown, for geth before #35918. Every bucket but engine overhead
+    comes from geth's timers. Overhead is newPayload latency minus geth's block
+    total, so it needs the harness CSVs too.
     """
-    split = all(prepare_sides(pairs))
     out = {name: [] for name, _ in BUCKETS}
-    if split:
-        out["block preparation"] = []
     out["engine overhead"] = []
     total = dict(BUCKETS)["block total"]
-
-    def outside(d):
-        return total(d) + (d["phases"]["prepare_ms"] if split else 0)
 
     for (bp, tp), (_, brows, trows) in zip(pairs, runs):
         for name, get in BUCKETS:
             out[name].append((series(bp, get), series(tp, get)))
-        if split:
-            prepare = lambda d: d["phases"]["prepare_ms"]
-            out["block preparation"].append((series(bp, prepare), series(tp, prepare)))
         bnp = {r["block"]: r["np"] for r in brows}
         tnp = {r["block"]: r["np"] for r in trows}
         out["engine overhead"].append((
-            {k: bnp[k] - v for k, v in series(bp, outside).items() if k in bnp},
-            {k: tnp[k] - v for k, v in series(tp, outside).items() if k in tnp},
+            {k: bnp[k] - v for k, v in series(bp, total).items() if k in bnp},
+            {k: tnp[k] - v for k, v in series(tp, total).items() if k in tnp},
         ))
     return out
 
 
-def breakdown(pairs, runs):
-    """Per-bucket p50/p95 per side and the paired delta, each with its run spread.
+def phase_series(pairs, runs, split):
+    """{row: [(base series, target series), ...]}, one entry per run, in table order.
+
+    newPayload comes from the harness CSVs and engine overhead is what it leaves
+    outside geth's block total. When both sides log the block preparation it gets
+    its own row and comes out of the overhead, which leaves the client, HTTP, the
+    JSON decode and the reply. Otherwise the overhead keeps it. Every row covers
+    the blocks in both the log and the CSVs, so the means add up exactly.
+    """
+    names = (["newPayload"] + (["block preparation"] if split else [])
+             + ["block total"] + [name for name, _ in PHASES] + ["engine overhead"])
+    out = {name: [] for name in names}
+
+    def side(pass_, rows):
+        np_ = {r["block"]: r["np"] for r in rows}
+        pass_ = [d for d in pass_ if d["block"]["number"] in np_]
+        prepare = lambda d: d["phases"]["prepare_ms"] if split else 0.0
+        total = lambda d: d["timing"]["total_ms"]
+        s = {"newPayload": series(pass_, lambda d: np_[d["block"]["number"]])}
+        if split:
+            s["block preparation"] = series(pass_, prepare)
+        s["block total"] = series(pass_, total)
+        for name, get in PHASES:
+            s[name] = series(pass_, get)
+        s["engine overhead"] = series(
+            pass_, lambda d: np_[d["block"]["number"]] - total(d) - prepare(d))
+        return s
+
+    for (bp, tp), (_, brows, trows) in zip(pairs, runs):
+        bs, ts_ = side(bp, brows), side(tp, trows)
+        for name in names:
+            out[name].append((bs[name], ts_[name]))
+    return out
+
+
+def timer_series(pairs):
+    """{timer: [(base series, target series), ...]}, one entry per run."""
+    return {name: [(series(bp, get), series(tp, get)) for bp, tp in pairs]
+            for name, get in TIMERS}
+
+
+def breakdown(per_row):
+    """Per-row p50/p95 per side and the paired delta, each with its run spread.
 
     Computed per run and then averaged so every number carries a ± and is judged by
     the same rule as the Results rows.
     """
     rows, total_n = [], 0
-    for name, per_run_series in bucket_series(pairs, runs).items():
+    for name, per_run_series in per_row.items():
         per_run = []
         for bs, ts_ in per_run_series:
             bv = [v for k, v in bs.items() if k in ts_]
@@ -320,6 +407,8 @@ def breakdown(pairs, runs):
                 # this is the delta that adds up. Block total, block preparation
                 # and engine overhead add up to newPayload exactly.
                 "d_mean": (st.fmean(tv) - mb) / mb * 100.0 if mb else float("nan"),
+                # the share column divides these
+                "b_mean": mb,
             }
             for agg, f in MS_COLS:
                 b, t = f(bv), f(tv)
@@ -347,13 +436,18 @@ def breakdown(pairs, runs):
         row["faster_est"] = excludes_zero([r["faster"] - 50 for r in per_run])
         rows.append(row)
         total_n = max(total_n, sum(r["n"] for r in per_run))
+    return rows, total_n
 
-    rates = []
+
+def rates_table(out, pairs):
+    """Mean cache hit rates per side."""
+    out.append("| rate | base | target |")
+    out.append("| :--- | ---: | ---: |")
     for name, get in RATES:
         bv = [get(d) for bp, _ in pairs for d in bp]
         tv = [get(d) for _, tp in pairs for d in tp]
-        rates.append((name, st.fmean(bv), st.fmean(tv)))
-    return rows, rates, total_n
+        out.append(f"| {name} | {st.fmean(bv):.1f}% | {st.fmean(tv):.1f}% |")
+    out.append("")
 
 
 # ------------------------------------------------------------------- results
@@ -430,6 +524,44 @@ def fmt_delta(d, hr):
 
 def direction(delta_pct, lower_is_better=True):
     return "▲" if (delta_pct < 0 if lower_is_better else delta_pct > 0) else "▼"
+
+
+def table(out, head, rows, label=lambda name: name, share=None):
+    """One breakdown table. share, when given, is each row's share of newPayload
+    and gets its own column."""
+    heads = [f"base {a} | target {a}" for a, _ in MS_COLS]
+    out.append(
+        f"| {head} | {'share | ' if share else ''}{' | '.join(heads)} | mean Δ | "
+        f"median Δ | blocks faster |"
+    )
+    out.append("| :--- " + "| ---: " * (2 * len(MS_COLS) + 3 + (1 if share else 0)) + "|")
+    for r in rows:
+        cells = [f"{share(r):.1f}%"] if share else []
+        for agg, _ in MS_COLS:
+            bv, tv = r["b_" + agg], r["t_" + agg]
+            bh, th = r[f"b_{agg}_sp"], r[f"t_{agg}_sp"]
+            # one precision per pair, so a steady target is not printed to
+            # more places than the base beside it
+            start = 2 if abs(bv) < 10 else 1
+            dec = max(places(bh, start), places(th, start))
+            am = ("≈" if r[f"d_{agg}_est"] is False
+                  else direction(r[f"d_{agg}"]))
+            cells.append(fmt_val(bv, bh, dec, "ms"))
+            cells.append(f"{fmt_val(tv, th, dec, 'ms')} {am}")
+        mm = "≈" if r["d_mean_est"] is False else direction(r["d_mean"])
+        # bold the median delta when it counts
+        b = "**" if r["paired_est"] else ""
+        pm = "≈" if r["paired_est"] is False else direction(r["paired"])
+        # above 50% is the good direction here
+        fm = ("≈" if r["faster_est"] is False
+              else direction(r["faster"] - 50, False))
+        out.append(
+            f"| {label(r['name'])} | {' | '.join(cells)} | "
+            f"{fmt_delta(r['d_mean'], r['d_mean_sp'])} {mm} | "
+            f"{b}{fmt_delta(r['paired'], r['paired_sp'])}{b} {pm} | "
+            f"{fmt_val(r['faster'], r['faster_sp'], 0, '%')} {fm} |"
+        )
+    out.append("")
 
 
 
@@ -713,71 +845,73 @@ def main():
         pairs, err = pass_pairs(passes, n_runs)
         bad = verify_orientation(pairs, runs) if pairs else []
         if err:
-            out.append(f"\n> Skipping the execution breakdown: {err}.\n")
+            out.append(f"\n> Skipping the breakdown: {err}.\n")
         elif bad:
             # refuse rather than risk printing a sign-flipped breakdown
             out.append(
-                f"\n> Skipping the execution breakdown: the pass order in "
+                f"\n> Skipping the breakdown: the pass order in "
                 f"`{slowblock}` does not match the harness's own CSVs for run(s) "
                 f"{', '.join(map(str, bad))}, so which pass belongs to which side is "
                 f"not certain and the deltas could come out inverted.\n"
             )
-        else:
-            brows, rates, n = breakdown(pairs, runs)
+        elif all(phase_sides(pairs)):
+            prep = prepare_sides(pairs)
+            rows, n = breakdown(phase_series(pairs, runs, all(prep)))
             bl = (f"{n // len(pairs)} blocks × {len(pairs)} runs" if len(pairs) > 1
                   else f"n={n}")
-            out.append(f"#### Execution breakdown (per block, {bl})\n")
-            heads = [f"base {a} | target {a}" for a, _ in MS_COLS]
+            par = parallel_sides(pairs)
+            out.append(f"#### newPayload phase breakdown, wall time (per block, {bl})\n")
+            np_mean = next(r["b_mean"] for r in rows if r["name"] == "newPayload")
+            table(out, "phase", rows, TREE.get, lambda r: r["b_mean"] / np_mean * 100.0)
             out.append(
-                f"| bucket | {' | '.join(heads)} | mean Δ | median Δ | "
-                f"blocks faster |"
+                "¹ running the block's transactions and system calls, including state "
+                "reads" + (" and the wait for the state root" if any(par) else "") + "\n"
             )
-            out.append("| :--- " + "| ---: " * (2 * len(MS_COLS) + 3) + "|")
-            for r in brows:
-                cells = []
-                for agg, _ in MS_COLS:
-                    bv, tv = r["b_" + agg], r["t_" + agg]
-                    bh, th = r[f"b_{agg}_sp"], r[f"t_{agg}_sp"]
-                    # one precision per pair, so a steady target is not printed to
-                    # more places than the base beside it
-                    start = 2 if abs(bv) < 10 else 1
-                    dec = max(places(bh, start), places(th, start))
-                    am = ("≈" if r[f"d_{agg}_est"] is False
-                          else direction(r[f"d_{agg}"]))
-                    cells.append(fmt_val(bv, bh, dec, "ms"))
-                    cells.append(f"{fmt_val(tv, th, dec, 'ms')} {am}")
-                mm = "≈" if r["d_mean_est"] is False else direction(r["d_mean"])
-                # bold the median delta when it counts
-                b = "**" if r["paired_est"] else ""
-                pm = "≈" if r["paired_est"] is False else direction(r["paired"])
-                # above 50% is the good direction here
-                fm = ("≈" if r["faster_est"] is False
-                      else direction(r["faster"] - 50, False))
-                out.append(
-                    f"| {r['name']} | {' | '.join(cells)} | "
-                    f"{fmt_delta(r['d_mean'], r['d_mean_sp'])} {mm} | "
-                    f"{b}{fmt_delta(r['paired'], r['paired_sp'])}{b} {pm} | "
-                    f"{fmt_val(r['faster'], r['faster_sp'], 0, '%')} {fm} |"
-                )
-            out.append("")
-            sides = prepare_sides(pairs)
-            if any(sides) and not all(sides):
-                has, lacks = ("target", "base") if sides[1] else ("base", "target")
+            if any(prep) and not all(prep):
+                has, lacks = ("target", "base") if prep[1] else ("base", "target")
                 out.append(
                     f"> Only the {has}'s geth logs the block preparation, the {lacks}'s "
                     f"predates it (#35918), so engine overhead still includes it on "
                     f"both sides.\n"
                 )
-            out.append("| rate | base | target |")
-            out.append("| :--- | ---: | ---: |")
-            for name, b_, t_ in rates:
-                out.append(f"| {name} | {b_:.1f}% | {t_:.1f}% |")
-            out.append("")
+            trows, _ = breakdown(timer_series(pairs))
+            if any(par):
+                out.append("#### Geth timers\n")
+                table(out, "timer", trows, lambda name: name + PARALLEL_MARKS.get(name, ""))
+                out.append(
+                    "These overlap the phases and don't add up to block total. "
+                    "² includes reads and the root wait · ³ summed across tx states · "
+                    "⁴ background goroutine\n"
+                )
+            else:
+                out.append("#### Geth timers, wall time\n")
+                table(out, "timer", trows)
+            if par[0] != par[1]:
+                has = "target" if par[1] else "base"
+                out.append(
+                    f"> Only the {has}'s geth took the parallel path, so the two sides' "
+                    f"timers are not measured the same way.\n"
+                )
+            rates_table(out, pairs)
+        else:
+            rows, n = breakdown(bucket_series(pairs, runs))
+            bl = (f"{n // len(pairs)} blocks × {len(pairs)} runs" if len(pairs) > 1
+                  else f"n={n}")
+            out.append(f"#### Execution breakdown (per block, {bl})\n")
+            table(out, "bucket", rows)
+            sides = phase_sides(pairs)
+            if any(sides):
+                has, lacks = ("target", "base") if sides[1] else ("base", "target")
+                out.append(
+                    f"> Only the {has}'s geth logs the phases, the {lacks}'s predates "
+                    f"them (#35918), so this is the older breakdown.\n"
+                )
+            rates_table(out, pairs)
     elif slowblock:
-        out.append(f"\n> No slow-block log at {slowblock}, so no execution breakdown.\n")
+        out.append(f"\n> No slow-block log at {slowblock}, so no breakdown.\n")
     else:
         out.append(
-            "\n> No execution breakdown. Run the harness with "
+            "\n> No breakdown. Run the harness with "
             "`-- --debug.logslowblock 0 --log.file <path>` and pass that path to "
             "--slowblock-log.\n"
         )
