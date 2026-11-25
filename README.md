@@ -71,6 +71,30 @@ resolve, and that file is a trust boundary rather than a convenience: whatever r
 you name gets fetched, built and executed on the box as a user with passwordless
 root. Adding a line to it is the whole authorization, so it goes through a PR.
 
+### Benchmarking a pull request
+
+GitHub keeps every PR's head on upstream as `pull/<number>/head`, so a PR from
+anyone can be benchmarked without adding their fork:
+
+```bash
+bash scripts/run.sh --base fork-point --feature pull/36215/head
+```
+
+From the Actions form, leave the fork as `ethereum` and type `pull/36215/head` as
+the ref. The number on its own does not work, since it is not a ref.
+
+That runs the PR's head as of when the run starts, which can be after the author
+pushed again if other runs were queued. To run one commit instead, give its full
+hash as the ref. Any commit still in a PR resolves from upstream, but a short hash
+does not, and nothing checks which PR a hash came from. Either way, the report and
+`bench-meta.json` record the commit that ran.
+
+**Read the PR before you start the run.** Upstream serves it, so it never goes
+through forks.txt, and nothing else checks it. The box builds and runs it as a
+user with passwordless root, and that covers more than the change itself: `make
+geth` runs the PR's own `build/ci.go`, and anything it adds to `go.mod` ends up in
+the binary.
+
 ### Naming the run
 
 `--label` decides where results are kept, under `benchmarks/bench/<label>/`. Leave it

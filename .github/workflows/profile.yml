@@ -22,7 +22,7 @@ on:
                   "lightclient", "MariusVanDerWijden", "rjl493456442"]
         default: ethereum
       feature:
-        description: "feature branch, tag, or commit to profile"
+        description: "feature branch, tag, or commit to profile. For a PR, pull/NUMBER/head"
         required: true
       base_fork:
         description: "base fork. Ignored for single"
